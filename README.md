@@ -10,7 +10,7 @@
 - **프로젝트명:** RansomWAR_BLUE01
 - **주제:** 랜섬웨어 대응 FUSE 파일시스템 개발  
 - **참여 인원:** 3명 (BLUE 1팀)
-- [**노션 🔗**](https://www.notion.so/RansomWAR-BLUE01-1a346e976de948d886bc60b37a2f7689?source=copy_link)
+- [**Notion 🔗**](https://www.notion.so/RansomWAR-BLUE01-1a346e976de948d886bc60b37a2f7689?source=copy_link)
 
 ---
 
