@@ -40,4 +40,7 @@
 
 ---
 
+## 🔗 링크
+- [노션](https://www.notion.so/RansomWAR-BLUE01-1a346e976de948d886bc60b37a2f7689?source=copy_link)
+
 ## 🧪 실행 방법
