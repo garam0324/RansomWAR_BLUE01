@@ -42,6 +42,6 @@
 ---
 
 ## 실행 방법
-```bash
+``` bash
 make
 make run
