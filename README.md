@@ -42,7 +42,7 @@
 
 ---
 
-## 실행 방법
+## 실행 (Ubuntu)
 ```bash
 make
 make run
