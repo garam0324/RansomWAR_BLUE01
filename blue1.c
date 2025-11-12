@@ -1,3 +1,32 @@
+/************************************************************
+ * Ransomware-Aware FUSE Filesystem (읽기/삭제 보호 + 위장 파일 차단)
+ *
+ * - 마운트 경로: $HOME/workspace/target (존재해야 함)
+ * - 로그 파일 : $HOME/myfs_log.txt
+ *
+ * [정책 요약]
+ *  1) open 필터 (가장 중요)
+ *     - 화이트리스트에 포함된 확장자만 open 허용 (강제 매직 검사)
+ *       * 확장자 없음/화이트리스트 외 → open 즉시 차단
+ *       * 실행 매직(ELF/PE)인데 문서/미디어 확장자 → 위장 판정 → 차단
+ *       * 우리가 아는 정상 매직과 불일치 → 위장/손상 판정 → 차단
+ *       * 매직을 모르면 과차단 방지 위해 허용 (운영 중 리스트 점진 추가)
+ *
+ *  2) read
+ *     - open에서 이미 위협이 걸러졌다는 전제 하에, 실제 파일 내용을 그대로 반환
+ *
+ *  3) unlink (대량 삭제 방어)
+ *     - 10초 윈도우 내 2회까지: 실제 삭제 허용(ALLOW)
+ *     - 3회 이상: 차단(BLOCK, -EPERM)
+ *
+ *  4) create
+ *     - 새 파일 생성 시에도 확장자 정책 적용 (확장자 없음/화이트리스트 외 → DENY)
+ *
+ * [빌드 예시]
+ *   gcc -O2 -Wall myfs.c $(pkg-config --cflags --libs fuse3) -o myfs
+ *
+ ************************************************************/
+
 #define FUSE_USE_VERSION 35
 #include <fuse3/fuse.h>
 #include <stdio.h>
@@ -12,49 +41,183 @@
 #include <time.h>
 #include <pthread.h>
 #include <stdarg.h>
+#include <ctype.h>
 
-// 전역 변수
-static int base_fd = -1; // base 디렉터리
-static FILE *log_fp = NULL; // 로그 파일 스트림
-static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER; // 로그 동시성 제어용 mutex
+// ========= 전역 상태 =========
+static int base_fd = -1;                            // 실제 로우 디렉터리 FD (마운트 대상 디렉터리)
+static FILE *log_fp = NULL;                         // 로그 파일 스트림
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER; // 로그 동기화
 
-// 대량 삭제 차단
-#define UNLINK_WINDOW_SEC      10 // 삭제 시도 수 측정할 시간(초)
-#define MAX_UNLINK_PER_WINDOW  2  // 해당 윈도우에서 허용할 최대 삭제 시도 수
-static time_t rl_window_start = 0; // 현재 윈도우 시작 시각
-static int rl_unlink_count = 0;    // 현재 윈도우 내 삭제 시도 누계
+// ========= 대량 삭제 차단 파라미터 =========
+#define UNLINK_WINDOW_SEC      10   // 삭제 카운팅 윈도우(초)
+#define MAX_UNLINK_PER_WINDOW  2    // 윈도우 내 허용 삭제 횟수(3번째부터 차단)
+static time_t rl_window_start = 0;  // 현재 윈도우 시작 시각
+static int rl_unlink_count = 0;     // 현재 윈도우 내 삭제 시도 누계
 
-// 특정 시간 윈도우 내 삭제 시도 횟수를 체크하는 함수
-static int unlink_rate_limit_exceeded(int *out_count_in_window) {
-    time_t now = time(NULL);
-    // 현재 시간(now)이 기존 윈도우 시작 시각으로부터 UNLINK_WINDOW_SEC만큼 지났다면 새 윈도우 열기
-    if (rl_window_start == 0 || difftime(now, rl_window_start) >= UNLINK_WINDOW_SEC) {
-        rl_window_start = now;      // 새 윈도우 시작 시각 갱신
-        rl_unlink_count = 0;        // 카운트 초기화
+// ========= 화이트리스트 확장자 =========
+// * get_lower_ext()로 소문자화하므로 여기 목록은 전부 소문자로 유지 *
+static const char *SENSITIVE_EXTS[] = {
+  "doc","docx","docb","docm","dot","dotm","dotx",
+  "xls","xlsx","xlsm","xlsb","xlw","xlt","xlm","xlc","xltx","xltm",
+  "ppt","pptx","pptm","pot","pps","ppsm","ppsx","ppam","potx","potm",
+  "pst","ost","msg","emi","edb","vsd","vsdx","txt","csv","rtf","123",
+  "wks","wk1","pdf","dwg","onectoc2","snt","hwp","602","sxi","sti",
+  "sldx","sldm","vdi","vmdk","vmx","gpg","aes","arc","paq","bz2",
+  "tbk","bak","tar","tgz","gz","7z","rar","zip","backup","iso","vcd",
+  "jpeg","jpg","bmp","png","gif","raw","cgm","tif","tiff","net","psd",
+  "ai","svg","djvu","m4u","m3u","mid","wma","flv","3g2","mkv","3gp",
+  "mp4","mov","avi","asf","mpeg","vob","mpg","wmv","fla","swf","wav",
+  "mp3","sh","class","jar","java","rb","asp","php","jsp","brd","sch",
+  "dch","dip","pl","vb","vbs","ps1","bat","cmd","js","asm","h","pas",
+  "cpp","c","cs","suo","sln","ldf","mdf","ibd","myi","myd","frm",
+  "odb","dbf","db","mdb","accdb","sql","sqlitedb","sqlite3","asc",
+  "lay6","lay","mml","sxm","otg","odg","uop","std","sxd","otp","odp",
+  "wb2","slk","dif","stc","sxc","ots","ods","3dm","max","3ds","uot",
+  "stw","sxw","ott","odt","pem","p12","csr","crt","key","pfx","der"
+};
+
+// -----------------------------------------------------------
+// 유틸: 확장자 파싱/체크
+// -----------------------------------------------------------
+static void get_lower_ext(const char *name, char *ext_out, size_t ext_out_sz) {
+    ext_out[0] = '\0';
+    const char *p = strrchr(name, '.');
+    if (!p) return;
+    p++; // '.' 다음 문자부터 복사
+    size_t i=0;
+    while (*p && i+1<ext_out_sz) {
+        ext_out[i++] = (char)tolower((unsigned char)*p++);
     }
-    rl_unlink_count++;              // 카운트 1 증가
-    if (out_count_in_window) *out_count_in_window = rl_unlink_count;
-    // 현재 카운트가 허용 최대값을 초과하면 true 반환
-    return (rl_unlink_count > MAX_UNLINK_PER_WINDOW);
+    ext_out[i] = '\0';
+}
+static int has_extension(const char *name) {
+    const char *p = strrchr(name, '.');
+    return (p && *(p+1) != '\0');
+}
+static int is_sensitive_ext(const char *ext) {
+    if (!ext || !*ext) return 0;
+    for (size_t i=0;i<sizeof(SENSITIVE_EXTS)/sizeof(SENSITIVE_EXTS[0]);i++) {
+        if (strcmp(ext, SENSITIVE_EXTS[i]) == 0) return 1;
+    }
+    return 0;
 }
 
-// 경로 처리
+// -----------------------------------------------------------
+/* 유틸: 경로를 base_fd 기준 상대경로로 변환
+ * FUSE 콜백에 들어오는 path는 "/" 또는 "/foo/bar" 형태.
+ * 내부 openat/fstatat 등은 base_fd + relpath 로 수행한다.
+ */
 static void get_relative_path(const char *path, char *relpath) {
-    // 루트(/) 경로의 경우 . 로 치환
     if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
         strcpy(relpath, ".");
     } else {
-        // /로 시작하면 제거 후 상대경로로 복사
         if (path[0] == '/') path++;
         strncpy(relpath, path, PATH_MAX);
-        relpath[PATH_MAX - 1] = '\0'; // NULL 보장
+        relpath[PATH_MAX - 1] = '\0';
     }
 }
 
-// 로그 함수
+// -----------------------------------------------------------
+// 유틸: 파일 헤더(매직) 읽기 + 매직 판정
+// -----------------------------------------------------------
+static ssize_t read_file_magic_at_base(const char *relpath, unsigned char *buf, size_t n) {
+    int fd = openat(base_fd, relpath, O_RDONLY | O_NOFOLLOW);
+    if (fd == -1) return -1;
+    ssize_t r = pread(fd, buf, n, 0);
+    close(fd);
+    return r;
+}
+static int starts_with(const unsigned char *buf, ssize_t n, const void *sig, size_t siglen) {
+    return (n >= (ssize_t)siglen && memcmp(buf, sig, siglen) == 0);
+}
+static int is_exec_magic(const unsigned char *h, ssize_t n) {
+    // 실행 포맷 대표: ELF, PE(MZ)
+    if (starts_with(h,n,"\x7F""ELF",4)) return 1;
+    if (n>=2 && h[0]=='M' && h[1]=='Z') return 1;
+    return 0;
+}
+// "알고 있는 정상 매직"만 엄격 매칭 (모르면 허용)
+static int magic_ok_for_ext(const char *ext, const unsigned char *h, ssize_t n) {
+    if (!ext || !*ext || n<=0) return 1; // 정보 부족 → 허용(과차단 방지)
+
+    // 이미지/문서 대표
+    if (!strcmp(ext,"pdf"))   return starts_with(h,n,"%PDF",4);
+    if (!strcmp(ext,"png"))   return starts_with(h,n,"\x89PNG",4);
+    if (!strcmp(ext,"jpg") || !strcmp(ext,"jpeg")) return (n>=2 && h[0]==0xFF && h[1]==0xD8);
+    if (!strcmp(ext,"gif"))   return starts_with(h,n,"GIF",3);
+    if (!strcmp(ext,"tif") || !strcmp(ext,"tiff")) return (starts_with(h,n,"II*\0",4) || starts_with(h,n,"MM\0*",4));
+    if (!strcmp(ext,"psd"))   return starts_with(h,n,"8BPS",4);
+
+    // ZIP 계열 (docx/xlsx/pptx/…)
+    if (!strcmp(ext,"zip")||!strcmp(ext,"docx")||!strcmp(ext,"xlsx")||!strcmp(ext,"pptx")||
+        !strcmp(ext,"xltx")||!strcmp(ext,"xltm")||!strcmp(ext,"potx")||!strcmp(ext,"potm")||
+        !strcmp(ext,"ppsx")||!strcmp(ext,"ppsm")||!strcmp(ext,"sldx")||!strcmp(ext,"sldm"))
+        return starts_with(h,n,"PK\x03\x04",4);
+
+    // 구형 OLE 계열(.doc/.xls/.ppt/.vsd/.msg, 일부 .hwp)
+    if (!strcmp(ext,"doc")||!strcmp(ext,"xls")||!strcmp(ext,"ppt")||!strcmp(ext,"vsd")||!strcmp(ext,"msg")||!strcmp(ext,"hwp"))
+        return starts_with(h,n,"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1",8);
+
+    // 압축
+    if (!strcmp(ext,"gz")||!strcmp(ext,"tgz")) return (n>=2 && h[0]==0x1F && h[1]==0x8B);
+    if (!strcmp(ext,"bz2")) return starts_with(h,n,"BZh",3);
+    if (!strcmp(ext,"7z"))  return starts_with(h,n,"7z\xBC\xAF\x27\x1C",6);
+    if (!strcmp(ext,"rar")) return (starts_with(h,n,"Rar!\x1A\x07\x00",7) || starts_with(h,n,"Rar!\x1A\x07\x01\x00",8));
+
+    // DB/기타
+    if (!strcmp(ext,"sqlite3")||!strcmp(ext,"sqlitedb"))
+        return starts_with(h,n,"SQLite format 3",16);
+
+    // 모르는 확장자 → 허용(과차단 방지)
+    return 1;
+}
+
+/* 최종 의심 판별 (open 시점)
+ *  - 확장자 없음/화이트리스트 외 ⇒ 무조건 '의심'(차단)
+ *  - 화이트리스트 확장자면 헤더-확장자 검사를 수행
+ *     * 실행 매직(ELF/PE) 위장 ⇒ 의심
+ *     * 우리가 아는 정상 매직과 불일치 ⇒ 의심
+ *     * 매직 모름 ⇒ 허용
+ */
+static int is_suspicious_for_open(const char *relpath) {
+    char ext[32]; get_lower_ext(relpath, ext, sizeof(ext));
+
+    // 확장자 없음 → 차단
+    if (ext[0] == '\0') {
+        return 1;
+    }
+    // 화이트리스트 외 확장자 → 차단
+    if (!is_sensitive_ext(ext)) {
+        return 1;
+    }
+
+    // 존재하는 일반 파일 헤더 확인 (없거나 빈파일이면 과차단 방지로 통과)
+    unsigned char h[16] = {0};
+    ssize_t n = read_file_magic_at_base(relpath, h, sizeof(h));
+    if (n <= 0) {
+        return 0; // 정보 부족 → 허용
+    }
+
+    // 실행 매직 위장 → 의심
+    if (is_exec_magic(h, n)) {
+        return 1;
+    }
+
+    // 아는 정상 매직과 불일치 → 의심
+    if (!magic_ok_for_ext(ext, h, n)) {
+        return 1;
+    }
+
+    // 통과
+    return 0;
+}
+
+// -----------------------------------------------------------
+// 로그 기록 (스레드 안전)
+// -----------------------------------------------------------
 static void log_line(const char *action, const char *path, const char *result,
                      const char *reason, const char *extra_fmt, ...) {
-    char ts[64]; // 로컬 시각
+    char ts[64];
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
@@ -63,7 +226,7 @@ static void log_line(const char *action, const char *path, const char *result,
     uid_t uid;
     pid_t pid;
     struct fuse_context *fc = fuse_get_context();
-    if (fc != NULL) {
+    if (fc) {
         uid = fc->uid;
         pid = fc->pid;
     } else {
@@ -79,32 +242,35 @@ static void log_line(const char *action, const char *path, const char *result,
         va_end(ap);
     }
 
-    pthread_mutex_lock(&log_lock); // 스레드 안전하게 log_lock으로 보호
+    pthread_mutex_lock(&log_lock);
     if (log_fp) {
         fprintf(log_fp, "ts=%s uid=%d pid=%d action=%s path=\"%s\" result=%s",
                 ts, (int)uid, (int)pid, action, path ? path : "", result ? result : "");
-
-        // 이유(reason) 출력
-        if (reason) {
-            fprintf(log_fp, " reason=\"%s\"", reason);
-        } else {
-            fprintf(log_fp, " reason=\"\"");
-        }
-
-        // 추가 정보(extra) 출력
-        if (extra[0] != '\0') {
-            fprintf(log_fp, " extra=\"%s\"", extra);
-        }
-
+        if (reason) fprintf(log_fp, " reason=\"%s\"", reason); else fprintf(log_fp, " reason=\"\"");
+        if (extra[0]) fprintf(log_fp, " extra=\"%s\"", extra);
         fprintf(log_fp, "\n");
         fflush(log_fp);
     }
     pthread_mutex_unlock(&log_lock);
 }
 
+// -----------------------------------------------------------
+// 대량 삭제(UNLINK) 레이트 리밋
+// -----------------------------------------------------------
+static int unlink_rate_limit_exceeded(int *out_count_in_window) {
+    time_t now = time(NULL);
+    if (rl_window_start == 0 || difftime(now, rl_window_start) >= UNLINK_WINDOW_SEC) {
+        rl_window_start = now;     // 새 윈도우 시작
+        rl_unlink_count = 0;       // 카운트 리셋
+    }
+    rl_unlink_count++;
+    if (out_count_in_window) *out_count_in_window = rl_unlink_count;
+    return (rl_unlink_count > MAX_UNLINK_PER_WINDOW); // 3번째부터 초과(true)
+}
+
 // ========= FUSE 콜백 =========
 
-// getattr : 파일 속성 조회
+// getattr : 파일 메타데이터 조회
 static int myfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
     (void)fi;
     char rel[PATH_MAX];
@@ -113,191 +279,214 @@ static int myfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_i
     return 0;
 }
 
-// open : 파일 열기
+// open : 화이트리스트 + 매직 검사 기반으로 위장 파일 차단
 static int myfs_open(const char *path, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
+
+    // 존재하는 정규 파일만 검사 (디렉토리는 제외)
+    struct stat st;
+    int exists = (fstatat(base_fd, rel, &st, AT_SYMLINK_NOFOLLOW) == 0);
+
+    if (exists && S_ISREG(st.st_mode)) {
+        if (is_suspicious_for_open(rel)) {
+            log_line("OPEN", path, "DENY", "suspicious:unknown-ext-or-magic-mismatch-or-exec-disguise", NULL);
+            return -EACCES; // 위장/비정상 → 차단
+        }
+    } else if (!exists) {
+        // 파일이 아직 없는데 열려는 경우(O_CREAT 없이 접근) → 확장자 정책으로 선 차단 가능(옵션)
+        // char ext[32]; get_lower_ext(rel, ext, sizeof(ext));
+        // if (ext[0] == '\0' || !is_sensitive_ext(ext)) {
+        //     log_line("OPEN", path, "DENY", "suspicious:new-file-unknown-ext", NULL);
+        //     return -EACCES;
+        // }
+    }
+
     int fd = openat(base_fd, rel, fi->flags);
-    if (fd == -1) return -errno;
+    if (fd == -1) {
+        log_line("OPEN", path, "DENY", "os-error", "errno=%d", errno);
+        return -errno;
+    }
     fi->fh = fd;
+    // log_line("OPEN", path, "ALLOW", "policy:basic", "flags=0x%x", fi->flags);
     return 0;
 }
 
-// read : 읽기 시 FAKE_DATA 반환 (보호 정책)
+// read : open에서 걸러졌다는 전제 하에 실제 읽기 수행
 static int myfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     (void)path;
-    struct stat st;
-
-    // 현재 열려 있는 파일 핸들 기준으로 실제 파일 메타 데이터 조회 -> 실패시 -errno
-    if (fstat(fi->fh, &st) == -1) {
+    int fd = (int)fi->fh;
+    ssize_t res = pread(fd, buf, size, offset);
+    if (res == -1) {
+        log_line("READ", path, "DENY", "os-error", "errno=%d", errno);
         return -errno;
     }
-
-    // 실제 파일 크기 구하기
-    off_t real_size = st.st_size;
-
-    // offset이 파일 크기보다 크면 EOF 처리 -> 0 바이트 반환
-    if (offset >= real_size) {
-        log_line("READ", path, "ALLOW_FAKE", "policy:mask", "size=0 offset=%ld", (long)offset);
-        return 0;
-    }
-
-    // 실제로 채워줄 길이 계산
-    // 요청 size와 파일 끝까지 남은 길이(real_size - offset) 중 작은 값
-    size_t to_read = size;
-    if ((off_t)to_read > real_size - offset) {
-        to_read = (size_t)(real_size - offset);
-    }
-
-    // 패턴을 반복하여 buf 채움
-    // 호출자가 요청한 offset을 고려해 패턴 내 시작 위치를 offset % 패턴길이로 정렬
-    const char *pattern = "FAKE_DATA_BLOCK_0123456789\n";
-    size_t plen = strlen(pattern);
-
-    // 이번 읽기는 파일 전체 기준 offset에서 시작하므로
-    // 패턴 내 시작 위치는 offset을 패턴 길이로 나눈 나머지
-    size_t pos = (size_t)(offset % plen);
-
-    // buf를 to_read 만큼 패턴으로 채움
-    // 매 반복마다 패턴의 남은 구간(plen - pos) 또는 남은 필요량(to_read - filled) 중 작은 만큼만 복사
-    size_t filled = 0;
-    while (filled < to_read) {
-        size_t chunk = plen - pos; // 패턴에서 이번에 가져올 수 있는 최대 길이
-        if (chunk > to_read - filled) { // 실제 필요한 만큼만
-            chunk = to_read - filled;
-        }
-
-        memcpy(buf + filled, pattern + pos, chunk); // 패턴 일부를 결과 버퍼에 복사
-        filled += chunk; // 누적 복사량 갱신
-        pos = 0; // 다음 반복부터는 패턴 시작부터
-    }
-
-    // offset == 0일 때 로깅
-    if (offset == 0)
-        log_line("READ", path, "ALLOW_FAKE", "policy:mask", "size=%zu offset=%ld", to_read, (long)offset);
-    return (int)to_read; // 읽은 바이트 수 반환
+    // 필요 시 로깅 추가 가능 (과다 로그 방지로 생략)
+    return (int)res;
 }
 
-// unlink : 삭제 차단 정책 (한도 내는 허용)
+// unlink : 10초 윈도우 내 2회까지 허용, 초과 시 BLOCK
 static int myfs_unlink(const char *path) {
-    int count_in_window = 0; // 현재 창에서 몇 번째 시도인지 기록
-    int exceeded = unlink_rate_limit_exceeded(&count_in_window); // 대량 삭제 여부 판단
+    int count_in_window = 0;
+    int exceeded = unlink_rate_limit_exceeded(&count_in_window);
 
     char rel[PATH_MAX];
     get_relative_path(path, rel);
 
     if (exceeded) {
-        // 대량 삭제로 판단된 경우, 거부 + 로깅
         log_line("UNLINK", path, "BLOCK", "rate-limit",
                  "window=%ds max=%d count=%d",
                  UNLINK_WINDOW_SEC, MAX_UNLINK_PER_WINDOW, count_in_window);
-        return -EPERM; // 권한 없음
+        return -EPERM; // 대량 삭제 차단
     } else {
-        // 아직 한도 이내의 정상 삭제 시도 → 실제 삭제 수행
+        // 한도 이내에서는 실제 삭제 수행
         if (unlinkat(base_fd, rel, 0) == -1) {
             log_line("UNLINK", path, "DENY", "os-error", "errno=%d", errno);
-            return -errno; // OS 레벨 오류 (존재하지 않거나 권한 없음 등)
+            return -errno;
         }
         log_line("UNLINK", path, "ALLOW", "policy:normal",
                  "window=%ds max=%d count=%d",
                  UNLINK_WINDOW_SEC, MAX_UNLINK_PER_WINDOW, count_in_window);
-        return 0; // 정상 수행
+        return 0;
     }
 }
 
-
-// create : 파일 생성
+// create : 새 파일 생성 시에도 확장자 정책 적용 (무확장자/화이트리스트 외 차단)
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
+
+    char ext[32]; get_lower_ext(rel, ext, sizeof(ext));
+    if (ext[0] == '\0' || !is_sensitive_ext(ext)) {
+        log_line("CREATE", path, "DENY", "suspicious:unknown-ext", NULL);
+        return -EACCES;
+    }
+
     int fd = openat(base_fd, rel, fi->flags | O_CREAT, mode);
-    if (fd == -1) return -errno;
+    if (fd == -1) {
+        log_line("CREATE", path, "DENY", "os-error", "errno=%d", errno);
+        return -errno;
+    }
     fi->fh = fd;
     log_line("CREATE", path, "ALLOW", "policy:basic", NULL);
     return 0;
 }
 
-// write : 항상 허용
+// write : 정상 쓰기 허용(오류만 로깅)
 static int myfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    ssize_t res = pwrite(fi->fh, buf, size, offset);
-    if (res == -1) res = -errno;
+    (void)path;
+    int fd = (int)fi->fh;
+    ssize_t res = pwrite(fd, buf, size, offset);
+    if (res == -1) {
+        log_line("WRITE", path, "DENY", "os-error", "errno=%d", errno);
+        return -errno;
+    }
     log_line("WRITE", path, "ALLOW", "policy:basic", "size=%zu offset=%ld", size, (long)offset);
     return (int)res;
 }
 
-// release : 파일 닫기
+// release : FD 정리
 static int myfs_release(const char *path, struct fuse_file_info *fi) {
-    close(fi->fh);
+    (void)path;
+    if (fi->fh) close((int)fi->fh);
+    fi->fh = 0;
     log_line("RELEASE", path, "ALLOW", "policy:basic", NULL);
     return 0;
 }
 
-// ========= main 함수 =========
+// readdir : 디렉터리 나열 (ls 지원)
+// - path 아래의 엔트리를 openat+fdopendir 후 readdir로 돌면서 filler에 채움
+static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                        off_t offset, struct fuse_file_info *fi,
+                        enum fuse_readdir_flags flags)
+{
+    (void)offset; // 오프셋은 단순 구현에서는 미사용
+    (void)fi;     // 디렉터리 핸들 유지가 필요하면 opendir/releasedir 도 구현 가능
+    (void)flags;  // FUSE3의 확장 플래그 (여기선 미사용)
+
+    char rel[PATH_MAX];
+    get_relative_path(path, rel);
+
+    // base_fd 기준으로 디렉터리 FD 열기 (O_DIRECTORY로 안전하게)
+    int dir_fd = openat(base_fd, rel, O_RDONLY | O_DIRECTORY);
+    if (dir_fd == -1) {
+        // 디렉터리 열기 실패 → 에러 로깅 후 errno 반환
+        log_line("READDIR", path, "DENY", "os-error-openat", "errno=%d", errno);
+        return -errno;
+    }
+
+    // FD → DIR* 변환
+    DIR *dp = fdopendir(dir_fd);
+    if (dp == NULL) {
+        // 변환 실패 시 FD 닫고 에러 처리
+        log_line("READDIR", path, "DENY", "os-error-fdopendir", "errno=%d", errno);
+        close(dir_fd);
+        return -errno;
+    }
+
+    // 디렉터리 엔트리 순회
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        // filler에 이름만 채우는 간단 버전 (stat를 더해주고 싶으면 여기서 lstat하여 stbuf 넘기면 됨)
+        if (filler(buf, de->d_name, NULL, 0, 0) != 0) {
+            // 사용자 버퍼가 꽉 찬 경우 조기 종료
+            break;
+        }
+    }
+
+    // DIR*를 닫으면 내부 FD도 같이 닫힘
+    closedir(dp);
+
+    // 성공 로그
+    log_line("READDIR", path, "ALLOW", "policy:basic", NULL);
+    return 0;
+}
+
+
+// ========= main =========
 int main(int argc, char *argv[]) {
-    // FUSE 인자 객체 초기화
+    // FUSE 인자 초기화
     struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
+    if (fuse_opt_add_arg(&args, argv[0]) == -1) return -1;
+    if (fuse_opt_add_arg(&args, "-f") == -1) return -1; // 항상 포그라운드
 
-    // 프로그램명(argv[0])을 FUSE 인자에 추가
-    if (fuse_opt_add_arg(&args, argv[0]) == -1) {
-        return -1;
-    }
-
-    // -f 옵션 추가 : 항상 포그라운드 모드로 실행
-    if (fuse_opt_add_arg(&args, "-f") == -1) {
-        return -1;
-    }
-
-    // 고정 마운트 지점: $HOME/workspace/target
+    // 마운트 경로: $HOME/workspace/target (없으면 종료)
     const char *home = getenv("HOME");
     char mountpoint[PATH_MAX];
-    
-    if (home != NULL) {
-        // 환경변수 HOME이 존재하면 그 아래로 경로 결합
-        snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
-    }
-    else {
-        // HOME이 없을 때 폴백
-        snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
-    }
+    if (home) snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
+    else      snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
 
-    // 마운트 지점 유효성 확인
-    // stat으로 존재 여부/타입 확인 -> 디렉터리가 아니면 에러
     struct stat st;
     if (stat(mountpoint, &st) != 0 || !S_ISDIR(st.st_mode)) {
         fprintf(stderr, "Mountpoint not found: %s\n", mountpoint);
         return -1;
     }
 
-    // 베이스 디렉터리 fd 열기
+    // base_fd 오픈 (O_DIRECTORY로 안전)
     base_fd = open(mountpoint, O_RDONLY | O_DIRECTORY);
     if (base_fd == -1) {
         perror("open mountpoint");
         return -1;
     }
 
-    // 로그 파일은 $HOME/myfs_log.txt
-    // a 모드 : 존재하면 이어쓰기, 없으면 생성
+    // 로그 파일 열기
     char log_path[PATH_MAX];
-    if (home != NULL) {
-        snprintf(log_path, sizeof(log_path), "%s/myfs_log.txt", home);
-    }
-    else {
-        snprintf(log_path, sizeof(log_path), "/tmp/myfs_log.txt");
-    }
+    if (home) snprintf(log_path, sizeof(log_path), "%s/myfs_log.txt", home);
+    else      snprintf(log_path, sizeof(log_path), "/tmp/myfs_log.txt");
+
     log_fp = fopen(log_path, "a");
-    if (!log_fp) {
-        perror("fopen log");
-    }
+    if (!log_fp) perror("fopen log");
 
     log_line("START", "/", "ALLOW", "boot", "mountpoint=\"%s\"", mountpoint);
 
-    // 마운트 경로를 FUSE 인자에 추가
+    // FUSE에 마운트 경로 전달
     if (fuse_opt_add_arg(&args, mountpoint) == -1) {
         fprintf(stderr, "Failed to add mountpoint to fuse args\n");
+        if (log_fp) fclose(log_fp);
+        close(base_fd);
         return -1;
     }
 
-    // FUSE 실행 (myfs_oper 구조체 전달)
     static const struct fuse_operations myfs_oper = {
         .getattr = myfs_getattr,
         .open    = myfs_open,
@@ -306,15 +495,13 @@ int main(int argc, char *argv[]) {
         .create  = myfs_create,
         .write   = myfs_write,
         .release = myfs_release
+        .readdir = myfs_readdir
     };
 
-    // FUSE 메인 루프 진입
     int ret = fuse_main(args.argc, args.argv, &myfs_oper, NULL);
 
-    // 종료 로그
     log_line("STOP", "/", "ALLOW", "shutdown", NULL);
 
-    // 리소스 정리
     if (log_fp) fclose(log_fp);
     if (base_fd != -1) close(base_fd);
     fuse_opt_free_args(&args);
