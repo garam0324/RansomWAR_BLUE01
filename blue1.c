@@ -178,10 +178,14 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
     return (int)to_read; // 읽은 바이트 수 반환
 }
 
-// unlink : 삭제 차단 정책
+// unlink : 삭제 차단 정책 (한도 내는 허용)
 static int myfs_unlink(const char *path) {
     int count_in_window = 0; // 현재 창에서 몇 번째 시도인지 기록
     int exceeded = unlink_rate_limit_exceeded(&count_in_window); // 대량 삭제 여부 판단
+
+    char rel[PATH_MAX];
+    get_relative_path(path, rel);
+
     if (exceeded) {
         // 대량 삭제로 판단된 경우, 거부 + 로깅
         log_line("UNLINK", path, "BLOCK", "rate-limit",
@@ -189,13 +193,18 @@ static int myfs_unlink(const char *path) {
                  UNLINK_WINDOW_SEC, MAX_UNLINK_PER_WINDOW, count_in_window);
         return -EPERM; // 권한 없음
     } else {
-        // 아직 한도 이내인 일반적인 삭제 시도 : 정책상 금지
-        log_line("UNLINK", path, "DENY", "policy:protect",
+        // 아직 한도 이내의 정상 삭제 시도 → 실제 삭제 수행
+        if (unlinkat(base_fd, rel, 0) == -1) {
+            log_line("UNLINK", path, "DENY", "os-error", "errno=%d", errno);
+            return -errno; // OS 레벨 오류 (존재하지 않거나 권한 없음 등)
+        }
+        log_line("UNLINK", path, "ALLOW", "policy:normal",
                  "window=%ds max=%d count=%d",
                  UNLINK_WINDOW_SEC, MAX_UNLINK_PER_WINDOW, count_in_window);
-        return -EACCES; // 접근 거부
+        return 0; // 정상 수행
     }
 }
+
 
 // create : 파일 생성
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
