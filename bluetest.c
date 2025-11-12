@@ -14,14 +14,13 @@
 #include <stdarg.h>
 
 // 전역 변수
-static int base_fd = -1; // base 디렉터리
-static FILE *log_fp = NULL; // 로그 파일 스트림
-static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER; // 로그 동시성 제어용 mutex
+static int base_fd = -1;
+static FILE *log_fp = NULL;
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // --- 악성 행위 탐지 (PID 기반) ---
 #define UNLINK_WINDOW_SEC     10 // 행위 탐지 시간 윈도우 (초)
 #define MAX_UNLINK_PER_WINDOW 2  // 윈도우 내 최대 허용 '삭제' 수
-#define MAX_WRITE_PER_WINDOW  5  // 윈도우 내 최대 허용 '쓰기' 수 (암호화 탐지용)
 #define MAX_TRACKED_PIDS    1024 // 추적할 최대 PID 개수
 
 // PID별 상태 추적 구조체
@@ -29,7 +28,7 @@ typedef struct {
     pid_t pid;                 // 프로세스 ID
     time_t window_start;       // 현재 윈도우 시작 시간
     int unlink_count;          // 현 윈도우 내 '삭제' 횟수
-    int write_count;           // 현 윈도우 내 '쓰기' 횟수
+    // 'write_count' 제거
     int is_malicious;        // '악성'으로 플래그되었는지 여부 (Sticky)
 } PidStats;
 
@@ -38,7 +37,6 @@ static pthread_mutex_t g_stats_lock = PTHREAD_MUTEX_INITIALIZER; // 추적 테�
 
 /**
  * @brief 현재 fuse context의 PID에 대한 통계 객체를 반환합니다.
- * 필요시 새 객체를 생성하거나 오래된 객체를 재활용합니다.
  */
 static PidStats* get_current_pid_stats() {
     struct fuse_context *fc = fuse_get_context();
@@ -52,7 +50,7 @@ static PidStats* get_current_pid_stats() {
     time_t now = time(NULL);
 
     for (int i = 0; i < MAX_TRACKED_PIDS; i++) {
-        // 1. 오래된 항목(윈도우 5배수)은 정리 (Garbage Collection)
+        // 1. 오래된 항목(윈도우 5배수)은 정리
         if (g_pid_stats[i].pid != 0 && difftime(now, g_pid_stats[i].window_start) > (UNLINK_WINDOW_SEC * 5)) {
             memset(&g_pid_stats[i], 0, sizeof(PidStats));
         }
@@ -73,8 +71,8 @@ static PidStats* get_current_pid_stats() {
         if (difftime(now, found->window_start) >= UNLINK_WINDOW_SEC) {
             found->window_start = now;
             found->unlink_count = 0;
-            found->write_count = 0;
-            // is_malicious 플래그는 리셋하지 않음 (한 번 악성이면 계속 악성)
+            // found->write_count = 0; // 제거
+            // is_malicious 플래그는 리셋하지 않음
         }
         pthread_mutex_unlock(&g_stats_lock);
         return found;
@@ -85,7 +83,7 @@ static PidStats* get_current_pid_stats() {
         empty_slot->pid = current_pid;
         empty_slot->window_start = now;
         empty_slot->unlink_count = 0;
-        empty_slot->write_count = 0;
+        // empty_slot->write_count = 0; // 제거
         empty_slot->is_malicious = 0;
         pthread_mutex_unlock(&g_stats_lock);
         return empty_slot;
@@ -104,11 +102,11 @@ static void get_relative_path(const char *path, char *relpath) {
     } else {
         if (path[0] == '/') path++;
         strncpy(relpath, path, PATH_MAX);
-        relpath[PATH_MAX - 1] = '\0'; // NULL 보장
+        relpath[PATH_MAX - 1] = '\0';
     }
 }
 
-// 로그 함수 (원본 코드의 버그 수정)
+// 로그 함수 (원본 코드의 버그 수정본)
 static void log_line(const char *action, const char *path, const char *result,
                      const char *reason, const char *extra_fmt, ...) {
     char ts[64];
@@ -117,7 +115,6 @@ static void log_line(const char *action, const char *path, const char *result,
     localtime_r(&now, &tm);
     strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S%z", &tm);
 
-    // --- 원본 코드 버그 수정 ---
     uid_t uid;
     pid_t pid;
     struct fuse_context *fc = fuse_get_context();
@@ -128,7 +125,7 @@ static void log_line(const char *action, const char *path, const char *result,
         uid = (uid_t)-1;
         pid = (pid_t)-1;
     }
-    // --- (extra 로직이 else 블록 안에 있던 버그 수정) ---
+
     char extra[256] = {0};
     if (extra_fmt && extra_fmt[0]) {
         va_list ap;
@@ -139,12 +136,11 @@ static void log_line(const char *action, const char *path, const char *result,
 
     pthread_mutex_lock(&log_lock);
     if (log_fp) {
-        // --- (fprintf가 분리되어 있던 버그 수정) ---
         fprintf(log_fp,
                 "ts=%s uid=%d pid=%d action=%s path=\"%s\" result=%s ",
                 ts, (int)uid, (int)pid, action, path, result);
         
-        if (reason != NULL) { // 'reasone' 오타 수정
+        if (reason != NULL) {
             fprintf(log_fp, "reason=\"%s\"", reason);
         } else {
             fprintf(log_fp, "reason=\"\"");
@@ -180,14 +176,14 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
     return 0;
 }
 
-// read (*** 핵심 수정 ***)
+// read (*** 악성 PID 탐지 로직 유지 ***)
 static int myfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     
     // ** 1. 현재 PID의 악성 상태 조회 **
     PidStats *stats = get_current_pid_stats();
     pid_t pid = (stats != NULL) ? stats->pid : (pid_t)-1;
 
-    // ** 2. 악성 PID로 플래그된 경우, FAKE_DATA 반환 (원본 로직) **
+    // ** 2. 악성 PID로 플래그된 경우, FAKE_DATA 반환 **
     if (stats && stats->is_malicious) {
         struct stat st;
         if (fstat(fi->fh, &st) == -1) return -errno;
@@ -221,13 +217,10 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
         log_line("READ", path, "DENY", "os-error", "errno=%d", errno);
         return -errno;
     }
-
-    // (정상 읽기는 로그 생략 - 너무 많음)
-    // log_line("READ", path, "ALLOW", "policy:basic", "size=%zu", (size_t)res);
     return (int)res;
 }
 
-// unlink (*** 핵심 수정 ***)
+// unlink (*** 악성 PID 탐지 로직 유지 ***)
 static int myfs_unlink(const char *path) {
     // ** 1. 현재 PID의 악성 상태 조회 **
     PidStats *stats = get_current_pid_stats();
@@ -270,7 +263,7 @@ static int myfs_unlink(const char *path) {
     return 0;
 }
 
-// create (기존과 동일, 로그만 수정)
+// create (기존과 동일)
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
@@ -284,54 +277,27 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     return 0;
 }
 
-// write (*** 핵심 수정 ***)
+// write (*** 원본 코드로 복원 ***)
 static int myfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
-    // ** 1. 현재 PID의 악성 상태 조회 **
-    PidStats *stats = get_current_pid_stats();
-    pid_t pid = (stats != NULL) ? stats->pid : (pid_t)-1;
-
-    // ** 2. 이미 악성 PID로 플래그된 경우, 즉시 차단 **
-    if (stats && stats->is_malicious) {
-        log_line("WRITE", path, "BLOCK", "policy:pid_flagged", "size=%zu offset=%ld pid=%d", size, (long)offset, (int)pid);
-        return -EPERM;
-    }
-
-    // ** 3. 쓰기 횟수 기반 악성 여부 판단 (Rate Limit 체크) **
-    int count = 0;
-    if (stats) {
-        stats->write_count++;
-        count = stats->write_count;
-    }
-
-    // ** 4. 쓰기 한도 초과 시, 악성으로 플래그하고 차단 (암호화 행위로 간주) **
-    if (count > MAX_WRITE_PER_WINDOW) {
-        if (stats) stats->is_malicious = 1; // 악성 PID로 지정
-        
-        log_line("WRITE", path, "BLOCK", "rate-limit",
-                 "window=%ds max=%d count=%d pid=%d",
-                 UNLINK_WINDOW_SEC, MAX_WRITE_PER_WINDOW, count, (int)pid);
-        return -EPERM;
-    }
-
-    // ** 5. 정상 PID + 한도 이내인 경우, 실제 쓰기 수행 **
+    // ** 악성 행위 탐지 로직 없음. 항상 실제 쓰기 시도 **
     ssize_t res = pwrite(fi->fh, buf, size, offset);
     if (res == -1) {
         log_line("WRITE", path, "DENY", "os-error", "errno=%d", errno);
         res = -errno;
     } else {
-        log_line("WRITE", path, "ALLOW", "policy:basic", "size=%zu offset=%ld count=%d", size, (long)offset, count);
+        log_line("WRITE", path, "ALLOW", "policy:basic", "size=%zu offset=%ld", size, (long)offset);
     }
     return (int)res;
 }
 
-// release (기존과 동일, 로그만 수정)
+// release (기존과 동일)
 static int myfs_release(const char *path, struct fuse_file_info *fi) {
     close(fi->fh);
     log_line("RELEASE", path, "ALLOW", "policy:basic", NULL);
     return 0;
 }
 
-// ========= main 함수 (기존과 거의 동일) =========
+// ========= main 함수 (기존과 동일) =========
 int main(int argc, char *argv[]) {
     // ** 추적 테이블 초기화 **
     memset(g_pid_stats, 0, sizeof(g_pid_stats));
@@ -385,7 +351,7 @@ int main(int argc, char *argv[]) {
         .read    = myfs_read,
         .unlink  = myfs_unlink,
         .create  = myfs_create,
-        .write   = myfs_write,
+        .write   = myfs_write, // <-- 원본 로직으로 복원
         .release = myfs_release
     };
 
