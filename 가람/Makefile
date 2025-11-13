@@ -1,7 +1,3 @@
-# ===========================
-# Makefile for blue1 (FUSE3)
-# ===========================
-
 CC      := gcc
 CFLAGS  := -Wall -Wextra -O2 $(shell pkg-config --cflags fuse3)
 LDLIBS  := $(shell pkg-config --libs fuse3)
