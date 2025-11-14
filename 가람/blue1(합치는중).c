@@ -85,6 +85,7 @@ typedef struct {
     time_t last_write_time;                         // 마지막 쓰기 시각
     time_t write_timestamps[MAX_WRITES_IN_WINDOW];  // 쓰기 시각들
     int ts_count;                                   // 배열에 들어있는 개수
+    int blocked;                                    // 1이면 이 파일은 이후 write 전부 BLOCK
 } file_state_t;
 
 static file_state_t file_states[MAX_TRACKED_FILES];
@@ -768,13 +769,16 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
 
         // 엔트로피 검사
-        double entropy = calculate_entropy(buf, size);
-        if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
-            log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f", entropy);
-            return -EPERM;
-        } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
-            log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
-	}
+		if (size >= 5) {
+        	double entropy = calculate_entropy(buf, size);
+        	if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
+            	log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld", entropy, size, (long)offset);
+            	return -EPERM;
+        	} else if (entropy > HIGH_ENTROPY_THRESHOLD) {
+            	log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f size=%zu, offset=%ld", entropy, size, (long)offset);
+			}
+		}
+		
 
         // 쓰기 빈도 창 관리
         pthread_mutex_lock(&state_mutex);
