@@ -20,13 +20,13 @@ static FILE *log_fp = NULL; // 로그 파일 스트림
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER; // 로그 동기화
 
 // 대량 삭제 차단 파라미터
-#define UNLINK_WINDOW_SEC      1   // 삭제 카운팅 윈도우(초)
+#define UNLINK_WINDOW_SEC      10   // 삭제 카운팅 윈도우(초)
 #define MAX_UNLINK_PER_WINDOW  2    // 윈도우 내 허용 삭제 횟수(3번째부터 차단)
 static time_t rl_window_start = 0;  // 현재 윈도우 시작 시각
 static int rl_unlink_count = 0;     // 현재 윈도우 내 삭제 시도 누계
 
 // 대량 읽기 차단 파라미터
-#define READ_WINDOW_SEC 2 
+#define READ_WINDOW_SEC 10 
 #define MAX_READ_BYTES_PER_WINDOW (10*1024*1024) // 10MB/10s
 						 
 // PID별 읽기 상태 구조체
