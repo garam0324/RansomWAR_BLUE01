@@ -44,6 +44,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내 삭제 시도 누계
 #define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
 #define HIGH_ENTROPY_THRESHOLD     7.0    // 엔트로피 경고 임계값
 #define HIGH_ENTROPY_HARD_BLOCK    7.5    // 이 이상이면 바로 차단
+#define FILE_BLOCK_COOLDOWN_SEC 10        // hard_block이면 10 동안 쓰기 금지
 #define WRITE_FREQUENCY_WINDOW     5      // 쓰기 빈도 감지 창 (초)
 #define MAX_WRITES_IN_WINDOW       10     // 창 내 최대 쓰기 횟수
 #define FILE_SIZE_CHANGE_THRESHOLD 0.8    // 초기 크기의 80% 미만으로 줄어들면 경고
@@ -85,6 +86,8 @@ typedef struct {
     time_t last_write_time;                         // 마지막 쓰기 시각
     time_t write_timestamps[MAX_WRITES_IN_WINDOW];  // 쓰기 시각들
     int ts_count;                                   // 배열에 들어있는 개수
+    int blocked;                                    // 1이면 임시 차단 상태
+    time_t blocked_until;                           // 이 시각 전까진 모든 wrtie 막음
 } file_state_t;
 
 static file_state_t file_states[MAX_TRACKED_FILES];
@@ -401,6 +404,9 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
         st->initial_size = initial_size;
         st->last_write_time = 0;
         st->ts_count = 0;
+        st->blocked = 0;
+		st->blocked_until = 0;
+		
         pthread_mutex_unlock(&state_mutex);
         return st;
     }
@@ -755,6 +761,28 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             return -EPERM;
         }
     }
+	
+    // 이 파일이 이전 high-entropy로 인해 임시 차단 상태인지 확인
+    if (state) {
+        pthread_mutex_lock(&state_mutex);
+        if (state->blocked) {
+            if (now_s < state->blocked_until) {
+                // 아직 쿨다운 중이면 모든 write 거부
+                pthread_mutex_unlock(&state_mutex);
+                log_line("WRITE", path, "BLOCKED",
+                         "file-temporarily-blocked-after-high-entropy",
+                         "blocked_until=%ld now=%ld",
+                         (long)state->blocked_until, (long)now_s);
+                return -EPERM;
+            } else {
+                // 쿨다운 시간 지났으면 차단 해제
+                state->blocked = 0;
+                state->blocked_until = 0;
+            }
+        }
+        pthread_mutex_unlock(&state_mutex);
+    }
+
 
     // 2) 파일 상태 가져오기
     file_state_t *state = file_state_get(path, 0);
@@ -770,7 +798,13 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         // 엔트로피 검사
         double entropy = calculate_entropy(buf, size);
         if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
-            log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f", entropy);
+			if (state) {
+				pthread_mutex_lock(&state_mutex);
+				state->blocked = 1;
+				state->blocked_until = now_s + FILE_BLOCK_COOLDOWN_SEC;
+				pthread_mutex_unlock(&state_mutex);
+			}
+            log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld cooldown=%ds", entropy, size, (size_t)offset, FILE_BLOCK_COOLDOWN_SEC);
             return -EPERM;
         } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
