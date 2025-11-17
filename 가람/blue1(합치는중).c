@@ -18,26 +18,29 @@
 #include <sys/time.h>
 #include <math.h>
 
-// ========= 전역 상태 =========
+// 전역 상태
 static int base_fd = -1;                          // 실제 로우 디렉터리 FD (마운트 대상 디렉터리)
-static FILE *log_fp = NULL;                       // 로그 파일 스트림
+static FILE *log_fp = NULL;                       // 로그 파일 포인
 static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER; // 로그 동기화
 
-// ========= UNLINK 레이트 리밋 =========
+// UNLINK 레이트 리밋
+// 일정 시간 창 안에서 허용할 최대 삭제 횟수
 #define UNLINK_WINDOW_SEC      10   // 삭제 카운팅 윈도우(초)
 #define MAX_UNLINK_PER_WINDOW  2    // 윈도우 내 허용 삭제 횟수
 static time_t rl_window_start = 0;  // 현재 윈도우 시작 시각
 static int rl_unlink_count = 0;     // 현재 윈도우 내 삭제 시도 누계
 
-// ========= READ 레이트 리밋 =========
+// READ 레이트 리밋
+// PID별로 10초 동안 읽을 수 있는 최대 바이트 수 제한
 #define READ_WINDOW_SEC 10
 #define MAX_READ_BYTES_PER_WINDOW (10*1024*1024) // 10MB/10s
 
-// ========= RENAME 레이트 리밋 =========
+// RENAME 레이트 리밋
+// 한 파일에 대해 너무 많은 rename 발생 방지
 #define RENAME_INTERVAL 10
-#define RENAME_LIMIT 5
+#define RENAME_LIMIT 3
 
-// ========= 스냅샷 / 엔트로피 / 쓰기 빈도 관련 =========
+// 스냅샷 / 엔트로피 / 쓰기 빈도 관련
 #define BACKUP_DIR_NAME ".snapshots"
 #define BACKUP_COUNTER_FILE "backup_count.dat" // 백업 카운터 파일명
 
@@ -51,6 +54,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내 삭제 시도 누계
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
 
+// READ 레이트 리밋용 구조체(PID별)
 typedef struct {
     pid_t pid;         // 추적 대상 PID
     time_t win_start;  // 현재 윈도우 시작 시각
@@ -61,42 +65,42 @@ typedef struct {
 static ReadStats g_read_stats[1024];
 static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// ========= Rename 레이트 리밋(파일별) =========
+// Rename 레이트 리밋용 구조체(파일별)
 typedef struct {
-    int count;
-    time_t last_time;
+    int count;         // 이 파일에 대해 지금까지 rename이 시도된 횟수
+    time_t last_time;  // 마지막 rename 시도 시각
 } RenameInfo;
 
-#define MAX_RENAME_TRACK 1024
+#define MAX_RENAME_TRACK 1024 // 추적할 수 있는 파일 수 (rename 관련)
 
 typedef struct {
-    char path[PATH_MAX];
-    RenameInfo info;
-    int in_use;
+    char path[PATH_MAX];      // 추적 중인 파일의 현재 경로
+    RenameInfo info;          // 해당 파일의 rename 통계
+    int in_use;               // 이 엔트리가 사용 중인지 (1: 사용, 0: 비어 있음)
 } RenameEntry;
 
 static RenameEntry rename_table[MAX_RENAME_TRACK];
 static pthread_mutex_t rename_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// ========= 파일별 쓰기 상태 (엔트로피/스냅샷/빈도) =========
+// 파일별 쓰기 상태 (엔트로피/스냅샷/빈도)
 typedef struct {
-    char path[PATH_MAX];                            // FUSE 경로 (/foo/bar)
+    char path[PATH_MAX];                            // FUSE 경로 (예: /foo/bar)
     int write_count;                                // 총 쓰기 횟수
     off_t initial_size;                             // 최초 오픈 시 파일 크기
     time_t last_write_time;                         // 마지막 쓰기 시각
     time_t write_timestamps[MAX_WRITES_IN_WINDOW];  // 쓰기 시각들
     int ts_count;                                   // 배열에 들어있는 개수
     int blocked;                                    // 1이면 임시 차단 상태
-    time_t blocked_until;                           // 이 시각 전까진 모든 wrtie 막음
+    time_t blocked_until;                           // 이 시각 전까진 모든 write 막음
 } file_state_t;
 
-static file_state_t file_states[MAX_TRACKED_FILES];
-static int file_state_count = 0;
-static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
+static file_state_t file_states[MAX_TRACKED_FILES]; // 여러 파일의 상태 저장하는 배열
+static int file_state_count = 0;                    // 현재 사용 중인 file_state 개수
+static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER; // file_state 보호용 뮤텍
 
-// ========= 확장자/패턴 화이트리스트 & 랜섬노트 =========
+// 확장자/패턴 화이트리스트 & 랜섬노트
 
-// 민감/보호 대상 확장자 (전부 소문자)
+// 보호해야 할 민감/중요 데이터 확장자 목록 (전부 소문자)
 static const char *SENSITIVE_EXTS[] = {
   "doc","docx","docb","docm","dot","dotm","dotx",
   "xls","xlsx","xlsm","xlsb","xlw","xlt","xlm","xlc","xltx","xltm",
@@ -118,13 +122,13 @@ static const char *SENSITIVE_EXTS[] = {
   "py","rs","go","lua","ts"
 };
 
-// 랜섬노트 이름 패턴
+// 랜섬노트 이름에 자주 등장하는 키워드 패턴
 static const char *ransom_note_names[] = {
     "readme", "decrypt", "how_to", NULL
 };
 
-// ========= 유틸 함수들 =========
-
+// 유틸 함수들
+// 문자열 전체를 소문자로 변환
 static void to_lower_str(const char *src, char *dst, size_t dst_sz) {
     size_t i;
     if (dst_sz == 0) return;
@@ -135,12 +139,12 @@ static void to_lower_str(const char *src, char *dst, size_t dst_sz) {
     dst[i] = '\0';
 }
 
-// 파일명에서 마지막 . 뒤 확장자 추출 (소문자)
+// 파일명에서 마지막 . 뒤 확장자 추출하여 소문자로 변환
 static void get_lower_ext(const char *name, char *ext_out, size_t ext_out_sz) {
     ext_out[0] = '\0';
-    const char *p = strrchr(name, '.');
-    if (!p) return;
-    p++;
+    const char *p = strrchr(name, '.'); // 마지막 '.' 위치 찾기
+    if (!p) return;                     // 확장자가 없으면 빈 문자열 유지
+    p++;                                // '.' 다음 문자부터 확장자 시작
     size_t i=0;
     while (*p && i+1<ext_out_sz) {
         ext_out[i++] = (char)tolower((unsigned char)*p++);
@@ -149,11 +153,12 @@ static void get_lower_ext(const char *name, char *ext_out, size_t ext_out_sz) {
 }
 
 // 경로를 base_fd 기준 상대경로로 변환
+// "/" 또는 "" -> "."으로 치환
 static void get_relative_path(const char *path, char *relpath) {
     if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
         strcpy(relpath, ".");
     } else {
-        if (path[0] == '/') path++;
+        if (path[0] == '/') path++; // 맨 앞 '/' 제거
         strncpy(relpath, path, PATH_MAX);
         relpath[PATH_MAX - 1] = '\0';
     }
@@ -165,12 +170,12 @@ static void log_line(const char *action, const char *path, const char *result,
     char ts[64];
     time_t now = time(NULL);
     struct tm tm;
-    localtime_r(&now, &tm);
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S%z", &tm);
+    localtime_r(&now, &tm);                                  // 현재 시간 -> tm 구조체
+    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S%z", &tm);    // ISO 유사 포맷 문자열로 변환
 
     uid_t uid;
     pid_t pid;
-    struct fuse_context *fc = fuse_get_context();
+    struct fuse_context *fc = fuse_get_context();            // 현재 FUSE 요청 컨텍스 (UID, PID 등)
     if (fc) {
         uid = fc->uid;
         pid = fc->pid;
@@ -199,9 +204,10 @@ static void log_line(const char *action, const char *path, const char *result,
     pthread_mutex_unlock(&log_lock);
 }
 
-// 파일 헤더 읽기
+// 파일 헤더(매직 넘버) 읽기
+// openat 후 앞 n 바이트 읽기
 static ssize_t read_file_magic_at_base(const char *relpath, unsigned char *buf, size_t n) {
-    int fd = openat(base_fd, relpath, O_RDONLY | O_NOFOLLOW);
+    int fd = openat(base_fd, relpath, O_RDONLY | O_NOFOLLOW); // 심볼릭 링크 따라가지 않도록 O_NOFFLOW
     if (fd == -1) return -1;
     ssize_t r = pread(fd, buf, n, 0);
     close(fd);
@@ -212,7 +218,7 @@ static int starts_with(const unsigned char *buf, ssize_t n, const void *sig, siz
     return (n >= (ssize_t)siglen && memcmp(buf, sig, siglen) == 0);
 }
 
-// 화이트리스트 포함 여부
+// 화이트리스트 확장자인지 확인
 static int is_sensitive_ext(const char *ext) {
     if (!ext || !*ext) return 0;
     for (size_t i=0;i<sizeof(SENSITIVE_EXTS)/sizeof(SENSITIVE_EXTS[0]);i++) {
@@ -221,6 +227,8 @@ static int is_sensitive_ext(const char *ext) {
     return 0;
 }
 
+// path에 확장자 존재 + 화이트리스트 안에 있는지 확인
+// exe는 차단
 static int is_whitelisted_and_has_ext(const char *path) {
     char ext[32];
     get_lower_ext(path, ext, sizeof(ext));
@@ -232,6 +240,7 @@ static int is_whitelisted_and_has_ext(const char *path) {
 }
 
 // 랜섬노트 이름 패턴 체크
+// 경로 전체에서 readme, decrypt 등 포함되면 1 반환
 static int is_ransom_note(const char *path) {
     char lower_path[PATH_MAX];
     to_lower_str(path, lower_path, sizeof(lower_path));
@@ -244,10 +253,12 @@ static int is_ransom_note(const char *path) {
     return 0;
 }
 
-// 매직 넘버 검사
+// 확장자와 매직 넘버 일치하는지 확인
+// 모르는 확장자는 그냥 허용 (1 반환)
 static int magic_ok_for_ext(const char *ext, const unsigned char *h, ssize_t n) {
-    if (!ext || !*ext || n<=0) return 1; // 정보 부족 → 허용
+    if (!ext || !*ext || n<=0) return 1; // 정보 부족 -> 판단 불가 -> 허용
 
+    // 주요 포맷들에 대한 매직 넘버 체크
     if (!strcmp(ext,"pdf"))   return starts_with(h,n,(const unsigned char*)"%PDF",4);
     if (!strcmp(ext,"png"))   return starts_with(h,n,(const unsigned char*)"\x89PNG",4);
     if (!strcmp(ext,"jpg") || !strcmp(ext,"jpeg")) return (n>=2 && h[0]==0xFF && h[1]==0xD8);
@@ -256,15 +267,18 @@ static int magic_ok_for_ext(const char *ext, const unsigned char *h, ssize_t n) 
         return (starts_with(h,n,(const unsigned char*)"II*\0",4) || starts_with(h,n,(const unsigned char*)"MM\0*",4));
     if (!strcmp(ext,"psd"))   return starts_with(h,n,(const unsigned char*)"8BPS",4);
 
+	// ZIP / OOXML 계열
     if (!strcmp(ext,"zip")||!strcmp(ext,"docx")||!strcmp(ext,"xlsx")||!strcmp(ext,"pptx")||
         !strcmp(ext,"xltx")||!strcmp(ext,"xltm")||!strcmp(ext,"potx")||!strcmp(ext,"potm")||
         !strcmp(ext,"ppsx")||!strcmp(ext,"ppsm")||!strcmp(ext,"sldx")||!strcmp(ext,"sldm"))
         return starts_with(h,n,(const unsigned char*)"PK\x03\x04",4);
 
+	// OLE 계열 (doc/xls/ppt/하나워드 등)
     if (!strcmp(ext,"doc")||!strcmp(ext,"xls")||!strcmp(ext,"ppt")||!strcmp(ext,"vsd")||
         !strcmp(ext,"msg")||!strcmp(ext,"hwp"))
         return starts_with(h,n,(const unsigned char*)"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1",8);
 
+	// 압축 포맷
     if (!strcmp(ext,"gz")||!strcmp(ext,"tgz")) return (n>=2 && h[0]==0x1F && h[1]==0x8B);
     if (!strcmp(ext,"bz2")) return starts_with(h,n,(const unsigned char*)"BZh",3);
     if (!strcmp(ext,"7z"))  return starts_with(h,n,(const unsigned char*)"7z\xBC\xAF\x27\x1C",6);
@@ -272,13 +286,14 @@ static int magic_ok_for_ext(const char *ext, const unsigned char *h, ssize_t n) 
         return (starts_with(h,n,(const unsigned char*)"Rar!\x1A\x07\x00",7) ||
                 starts_with(h,n,(const unsigned char*)"Rar!\x1A\x07\x01\x00",8));
 
+	// sqlite 계열열
     if (!strcmp(ext,"sqlite3")||!strcmp(ext,"sqlitedb"))
         return starts_with(h,n,(const unsigned char*)"SQLite format 3",16);
 
-    return 1; // 모르는 확장자 → 허용
+    return 1; // 매직 넘버를 모르는 확장자는 검사하지 않음
 }
 
-// ========== READ 레이트 리밋 유틸 ==========
+// PID별 ReadStats 가져오기 및 생성성
 
 static ReadStats* get_read_stats_for_current_pid(void) {
     struct fuse_context *fc = fuse_get_context();
@@ -296,6 +311,7 @@ static ReadStats* get_read_stats_for_current_pid(void) {
             slot = &g_read_stats[i];
             break;
         }
+		// 오래된 엔트리 정리
         if(g_read_stats[i].pid==0 && !empty) {
             empty = &g_read_stats[i];
         }
@@ -303,6 +319,8 @@ static ReadStats* get_read_stats_for_current_pid(void) {
             memset(&g_read_stats[i], 0, sizeof(ReadStats));
         }
     }
+	
+	// 아직 슬롯 없으면 새로 할당
     if(!slot && empty) {
         empty->pid=p;
         empty->win_start=now;
@@ -311,6 +329,7 @@ static ReadStats* get_read_stats_for_current_pid(void) {
         slot = empty;
     }
 
+	// 윈도우 초기화 시점
     if(slot && difftime(now, slot->win_start)>=READ_WINDOW_SEC) {
         slot->win_start=now;
         slot->bytes=0;
@@ -320,8 +339,7 @@ static ReadStats* get_read_stats_for_current_pid(void) {
     return slot;
 }
 
-// ========== UNLINK 레이트 리밋 ==========
-
+// UNLINK 레이트 리밋
 static int unlink_rate_limit_exceeded(int *out_count_in_window) {
     time_t now = time(NULL);
     if (rl_window_start == 0 || difftime(now, rl_window_start) >= UNLINK_WINDOW_SEC) {
@@ -333,8 +351,8 @@ static int unlink_rate_limit_exceeded(int *out_count_in_window) {
     return (rl_unlink_count > MAX_UNLINK_PER_WINDOW);
 }
 
-// ========== Rename 테이블 유틸 ==========
-
+// Rename 테이블에서 path에 해당하는 RenameInfo 찾기
+// 없으면 새 엔트리 생성성
 static RenameInfo *get_rename_info(const char *path) {
     int free_idx = -1;
 
@@ -348,6 +366,7 @@ static RenameInfo *get_rename_info(const char *path) {
         }
     }
 
+	// 새로 등록
     if (free_idx != -1) {
         rename_table[free_idx].in_use = 1;
         strncpy(rename_table[free_idx].path, path, PATH_MAX - 1);
@@ -356,9 +375,11 @@ static RenameInfo *get_rename_info(const char *path) {
         return &rename_table[free_idx].info;
     }
 
+	// 테이블 꽉 차면 NULL
     return NULL;
 }
 
+// Rename 이후 path 업데이트
 static void update_rename_path_for_info(RenameInfo *info, const char *new_path) {
     for (int i = 0; i < MAX_RENAME_TRACK; i++) {
         if (rename_table[i].in_use && &rename_table[i].info == info) {
@@ -369,6 +390,7 @@ static void update_rename_path_for_info(RenameInfo *info, const char *new_path) 
     }
 }
 
+// 오래된 rename 엔트리 정리
 static void cleanup_old_rename_entries(void) {
     time_t now = time(NULL);
     for (int i = 0; i < MAX_RENAME_TRACK; i++) {
@@ -383,12 +405,11 @@ static void cleanup_old_rename_entries(void) {
     }
 }
 
-// ========= file_state 관련 유틸 =========
-
-// 파일 상태 찾거나 새로 생성
+// file_state 테이블에서 path에 해당하는 상태 찾기/생성
 static file_state_t* file_state_get(const char *path, off_t initial_size) {
     pthread_mutex_lock(&state_mutex);
 
+	// 이미 존재하는지 검색
     for (int i = 0; i < file_state_count; i++) {
         if (strcmp(file_states[i].path, path) == 0) {
             pthread_mutex_unlock(&state_mutex);
@@ -396,6 +417,7 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
         }
     }
 
+	// 새 엔트리 생성
     if (file_state_count < MAX_TRACKED_FILES) {
         file_state_t *st = &file_states[file_state_count++];
         strncpy(st->path, path, PATH_MAX - 1);
@@ -406,7 +428,8 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
         st->ts_count = 0;
         st->blocked = 0;
 		st->blocked_until = 0;
-		
+
+		// 더 이상 공간 없으면 추적 포기
         pthread_mutex_unlock(&state_mutex);
         return st;
     }
@@ -415,9 +438,8 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
     return NULL;
 }
 
-// ========= 엔트로피/스냅샷 유틸 =========
-
-// 샤논 엔트로피 계산
+// 엔트로피 계산
+// 데이터가 랜덤할수록 값이 커짐
 static double calculate_entropy(const char *buf, size_t size) {
     if (size == 0) return 0.0;
 
@@ -436,7 +458,8 @@ static double calculate_entropy(const char *buf, size_t size) {
     return entropy;
 }
 
-// 백업 카운터 읽고 증가
+// 백업 카운터 읽고 1 증가시켜 저장
+// 백업 파일 이름을 고유하게 만들기 위함
 static unsigned long read_and_increment_backup_count(const char *backup_dir_path) {
     char counter_path[PATH_MAX];
     snprintf(counter_path, PATH_MAX, "%s/%s", backup_dir_path, BACKUP_COUNTER_FILE);
@@ -463,14 +486,17 @@ static unsigned long read_and_increment_backup_count(const char *backup_dir_path
 }
 
 // 스냅샷 생성
+// $HOME/.snapshots/ 백업 디렉터리 아래에 "번호_원본경로" 형태로 복사본 만듦
 static int create_snapshot(const char *path, const char *relpath) {
     char backup_dir_path[PATH_MAX];
     const char *home_dir = getenv("HOME");
     if (!home_dir) home_dir = "/tmp";
 
+	// 백업 디렉터리 경로 : $HOME/.snapshots
     snprintf(backup_dir_path, PATH_MAX, "%s/%s", home_dir, BACKUP_DIR_NAME);
     backup_dir_path[PATH_MAX-1] = '\0';
 
+    // 디렉터리 없으면 생성
     if (access(backup_dir_path, F_OK) == -1) {
         if (mkdir(backup_dir_path, 0700) == -1) {
             log_line("SNAPSHOT", path, "FAIL", "Cannot create backup dir", "errno=%d", errno);
@@ -478,15 +504,17 @@ static int create_snapshot(const char *path, const char *relpath) {
         }
     }
 
+	// 백업 번호 가져오기
     unsigned long backup_id = read_and_increment_backup_count(backup_dir_path);
 
     char count_str[32];
     snprintf(count_str, sizeof(count_str), "%lu", backup_id);
 
+	// relpath 안의 '/'를 '_'로 바꿔 파일명으로 사용
     char transformed_filename[PATH_MAX] = {0};
     size_t i = 0;
 
-    const size_t fixed_overhead = strlen(backup_dir_path) + strlen(count_str) + 3;
+    const size_t fixed_overhead = strlen(backup_dir_path) + strlen(count_str) + 3; // "/id_" 포함
     const size_t max_fname_len = (fixed_overhead < PATH_MAX) ? (PATH_MAX - fixed_overhead) : 0;
 
     while (i < max_fname_len && relpath[i] != '\0') {
@@ -495,6 +523,7 @@ static int create_snapshot(const char *path, const char *relpath) {
     }
     transformed_filename[i] = '\0';
 
+	// 최종 백업 경로 조합
     char backup_full_path[PATH_MAX] = {0};
     strncpy(backup_full_path, backup_dir_path, PATH_MAX-1);
     backup_full_path[PATH_MAX-1] = '\0';
@@ -529,6 +558,7 @@ static int create_snapshot(const char *path, const char *relpath) {
         return -errno;
     }
 
+	// 백업 파일 open
     int dst_fd = open(backup_full_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (dst_fd == -1) {
         close(src_fd);
@@ -536,6 +566,7 @@ static int create_snapshot(const char *path, const char *relpath) {
         return -errno;
     }
 
+	// 실제 복사
     char buf[4096];
     ssize_t n;
     while ((n = read(src_fd, buf, sizeof(buf))) > 0) {
@@ -558,23 +589,27 @@ static int create_snapshot(const char *path, const char *relpath) {
     return 0;
 }
 
-// ========== 의심 파일 판정 (open용) ==========
-
+// open 시 의심 파일 판단
+// 화이트리스트 확장자인데 매직 넘버가 안 맞거나 화이트리스트 확장자가 아니면 차단
 static int is_suspicious_for_open(const char *relpath) {
     char ext[32]; 
     get_lower_ext(relpath, ext, sizeof(ext));
 
+	// 확장자 없으면 차단
     if (ext[0] == '\0') {
         return 1;
     }
+
+	// 화이트리스트 아니면 차단
     if (!is_sensitive_ext(ext)) {
         return 1;
     }
 
+	// 매직 넘버 검사
     unsigned char h[16] = {0};
     ssize_t n = read_file_magic_at_base(relpath, h, sizeof(h));
     if (n <= 0) {
-        return 0; // 정보 부족 → 허용
+        return 0; // 헤더 못 읽으면 판단 불가 -> 허용
     }
 
     if (!magic_ok_for_ext(ext, h, n)) {
@@ -584,8 +619,7 @@ static int is_suspicious_for_open(const char *relpath) {
     return 0;
 }
 
-// ========== FUSE 콜백 구현 ==========
-
+// FUSE 콜백 구현
 // getattr
 static int myfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi) {
     (void)fi;
@@ -595,7 +629,7 @@ static int myfs_getattr(const char *path, struct stat *stbuf, struct fuse_file_i
     return 0;
 }
 
-// readdir (ls 지원)
+// readdir
 static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                         off_t offset, struct fuse_file_info *fi,
                         enum fuse_readdir_flags flags)
@@ -635,7 +669,7 @@ static int myfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     return 0;
 }
 
-// open : 확장자/매직 기반 위장 파일 차단 + 쓰기용 파일 initial_size 저장
+// open : 확장자/매직 기반 위장 파일 차단 + 쓰기용 파일 상태 초기화
 static int myfs_open(const char *path, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
@@ -643,6 +677,7 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
     struct stat st;
     int exists = (fstatat(base_fd, rel, &st, AT_SYMLINK_NOFOLLOW) == 0);
 
+	// 기존 파일에 대해 위장 검사
     if (exists && S_ISREG(st.st_mode)) {
         if (is_suspicious_for_open(rel)) {
             log_line("OPEN", path, "DENY", "suspicious:unknown-ext-or-magic-mismatch-or-exec-disguise", NULL);
@@ -650,6 +685,7 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
         }
     }
 
+	// 실제 open
     int fd = openat(base_fd, rel, fi->flags);
     if (fd == -1) {
         log_line("OPEN", path, "DENY", "os-error", "errno=%d", errno);
@@ -672,16 +708,19 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     char rel[PATH_MAX];
     get_relative_path(path, rel);
 
+	// 허용된 확장자가 아니면 차단
     if (!is_whitelisted_and_has_ext(rel)) {
         log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., .exe or no extension)", NULL);
         return -EPERM;
     }
 
+	// 랜섬노트 차단
     if (is_ransom_note(rel)) {
         log_line("CREATE", rel, "BLOCKED", "Ransom note name pattern detected", NULL);
         return -EPERM;
     }
 
+	// 실제 파일 생성
     int fd = openat(base_fd, rel, fi->flags | O_CREAT, mode);
     if (fd == -1) {
         log_line("CREATE", rel, "DENY", "os-error", "errno=%d", errno);
@@ -707,6 +746,7 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
         cur_pid = rs->pid;
     }
 
+	// 이미 차단 상태면 바로 거부
     if(rs && rs->blocked){
         log_line("READ", path, "BLOCK", "rate-limit-read", "pid=%d", (int)rs->pid);
         return -EPERM;
@@ -719,10 +759,13 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
         return -errno;
     }
 
+	// 읽기량 누적 / 임계 초과 검사
     if (rs && res > 0) {
         int just_blocked = 0;
         pthread_mutex_lock(&g_read_lock);
         time_t now = time(NULL);
+
+		// 윈도우 리셋셋
         if (difftime(now, rs->win_start) >= READ_WINDOW_SEC) {
             rs->win_start = now;
             rs->bytes = 0;
@@ -745,18 +788,18 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
     return (int)res;
 }
 
-// write : 매직 검사 + 엔트로피/스냅샷/횟수/빈도/크기 감소 탐지
+// write : 매직 검사 + 엔트로피/스냅샷/빈도/크기 감소 탐지 + 2번 연속 쓰기 방지
 static int myfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     char relpath[PATH_MAX];
     get_relative_path(path, relpath);
 
     int fd = (int)fi->fh;
 
-        // 2) 파일 상태 가져오기
+	// 1) 파일 상태 조회 및 high_entropy BLOCK 쿨다운 확인
     file_state_t *state = file_state_get(path, 0);
     time_t now_s = time(NULL);
 
-       // 이 파일이 이전 high-entropy로 인해 임시 차단 상태인지 확인
+    // 이 파일이 이전 high-entropy로 인해 임시 차단 상태인지 확인
     if (state) {
         pthread_mutex_lock(&state_mutex);
         if (state->blocked) {
@@ -778,7 +821,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     }
 
 
-    // 1) 매직 검사 (처음 쓰기 시 헤더 체크)
+    // 2) 매직 검사 (처음 쓰기 시 헤더 체크)
     if (offset == 0 && size >= 16) {
         char ext[32];
         get_lower_ext(relpath, ext, sizeof(ext));
@@ -788,7 +831,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
     }
 
-
+	3) 엔트로피/빈도/스냅샷
     if (state) {
         // 최대 쓰기 횟수 제한
         if (state->write_count >= MAX_WRITES_PER_FILE) {
@@ -808,6 +851,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld cooldown=%ds", entropy, size, (size_t)offset, FILE_BLOCK_COOLDOWN_SEC);
             return -EPERM;
         } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
+			// 경고만 찍고 허용
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
 	}
 
@@ -816,6 +860,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         int i = 0;
         while (i < state->ts_count) {
             if (difftime(now_s, state->write_timestamps[i]) > WRITE_FREQUENCY_WINDOW) {
+				// 윈도우 밖의 오래된 타임스탬프 제거
                 state->write_timestamps[i] = state->write_timestamps[state->ts_count - 1];
                 state->ts_count--;
             } else {
@@ -836,20 +881,21 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             st_before.st_size > MIN_SIZE_FOR_SNAPSHOT &&
             state->write_count == 0) {
             create_snapshot(path, relpath);
-            // initial_size가 0이었다면 여기서 채워준다
+			
+            // initial_size가 0이었다면 여기서 채워줌
             if (state->initial_size == 0)
                 state->initial_size = st_before.st_size;
         }
     }
 
-    // 3) 실제 쓰기
+    // 4) 실제 write 수행
     ssize_t res = pwrite(fd, buf, size, offset);
     if (res == -1) {
         log_line("WRITE", path, "DENY", "os-error", "errno=%d", errno);
         return -errno;
     }
 
-    // 4) 상태 업데이트 + 크기 감소 감시
+    // 5) 상태 업데이트 + 크기 감소 감지지
     if (state) {
         pthread_mutex_lock(&state_mutex);
 
@@ -861,6 +907,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
         struct stat st_after;
         if (fstat(fd, &st_after) == 0) {
+			// 초기 크기 대비 너무 즐어들면 경고
             if (state->initial_size > 0 &&
                 (double)st_after.st_size < (double)state->initial_size * FILE_SIZE_CHANGE_THRESHOLD) {
                 log_line("WRITE", path, "FLAG", "file-size-drop",
@@ -872,6 +919,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
         log_line("WRITE", path, "ALLOW", "write-ok", "count=%d", state->write_count);
     } else {
+		// state 테이블에서 추적하지 못한 경우
         log_line("WRITE", path, "ALLOW", "state-tracking-missed", "size=%zu offset=%ld", size, (long)offset);
     }
 
@@ -887,7 +935,7 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
     return 0;
 }
 
-// unlink : 윈도우 내 횟수 제한
+// unlink : 삭제 레이트 리밋
 static int myfs_unlink(const char *path) {
     int count_in_window = 0;
     int exceeded = unlink_rate_limit_exceeded(&count_in_window);
@@ -896,6 +944,7 @@ static int myfs_unlink(const char *path) {
     get_relative_path(path, rel);
 
     if (exceeded) {
+		// 윈도우 내 삭제 횟수 초과 -> 차단
         log_line("UNLINK", path, "BLOCK", "rate-limit",
                  "window=%ds max=%d count=%d",
                  UNLINK_WINDOW_SEC, MAX_UNLINK_PER_WINDOW, count_in_window);
@@ -932,7 +981,7 @@ static int myfs_rmdir(const char *path) {
     return 0;
 }
 
-// rename : per-file rename 레이트리밋 + 확장자/매직/랜섬노트 검사
+// rename : 각 파일마다 rename 레이트리밋 + 확장자/매직/랜섬노트 검사
 static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
@@ -943,6 +992,7 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
 
     pthread_mutex_lock(&rename_lock);
 
+	// 오래된 엔트리 제거
     cleanup_old_rename_entries();
 
     RenameInfo *info = get_rename_info(relfrom);
@@ -958,24 +1008,29 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
         log_line("RENAME", relto, "BLOCKED", "Rename flood detected (per file)", NULL);
         return -EPERM;
     }
-    if (info->count >= 5 /* RENAME_LIMIT */) {
+
+	// 허용 횟수 초과
+    if (info->count >= 5) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Rename limit exceeded (per file)", NULL);
         return -EPERM;
     }
 
+	// 새 이름이 화이트리스트 확장자가 아니면 차단
     if (!is_whitelisted_and_has_ext(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "New file extension not in whitelist policy", NULL);
         return -EPERM;
     }
 
+	// 새 이름이 랜섬노트면 차단
     if (is_ransom_note(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Ransom note name pattern detected", NULL);
         return -EPERM;
     }
 
+	// rename 전 매직 검사 (위장 확장자 방지)
     struct stat st;
     unsigned char h[16] = {0};
     ssize_t n_read = -1;
@@ -994,6 +1049,7 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
         }
     }
 
+	// 실제 rename 수행
     int res = renameat(base_fd, relfrom, base_fd, relto);
     if (res == -1) {
         pthread_mutex_unlock(&rename_lock);
@@ -1001,6 +1057,7 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
         return -errno;
     }
 
+	// 통계 갱신
     info->count++;
     info->last_time = now;
     update_rename_path_for_info(info, relto);
@@ -1026,11 +1083,11 @@ static int myfs_utimens(const char *path, const struct timespec tv[2], struct fu
     return 0;
 }
 
-// ========= main =========
+// main : FUSE 초기화 및 마운트
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
-    if (fuse_opt_add_arg(&args, argv[0]) == -1) return -1;
-    if (fuse_opt_add_arg(&args, "-f") == -1) return -1; // 항상 포그라운드
+    if (fuse_opt_add_arg(&args, argv[0]) == -1) return -1; // argv[0] (프로그램 이름) 추가
+    if (fuse_opt_add_arg(&args, "-f") == -1) return -1; // 항상 포그라운드 (-f)
 
     // 마운트 경로: $HOME/workspace/target
     const char *home = getenv("HOME");
@@ -1038,19 +1095,21 @@ int main(int argc, char *argv[]) {
     if (home) snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
     else      snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
 
+	// 마운트 디렉터리 존재 확인
     struct stat st;
     if (stat(mountpoint, &st) != 0 || !S_ISDIR(st.st_mode)) {
         fprintf(stderr, "Mountpoint not found: %s\n", mountpoint);
         return -1;
     }
 
+	// base_fd : 실제 디렉터리 FD
     base_fd = open(mountpoint, O_RDONLY | O_DIRECTORY);
     if (base_fd == -1) {
         perror("open mountpoint");
         return -1;
     }
 
-    // 로그 파일: $HOME/myfs_log.txt (네가 원했던 경로)
+    // 로그 파일: $HOME/myfs_log.txt
     char log_path[PATH_MAX];
     if (home) snprintf(log_path, sizeof(log_path), "%s/myfs_log.txt", home);
     else      snprintf(log_path, sizeof(log_path), "/tmp/myfs_log.txt");
@@ -1058,34 +1117,7 @@ int main(int argc, char *argv[]) {
     log_fp = fopen(log_path, "a");
     if (!log_fp) perror("fopen log");
 
-    log_line("START", "/", "ALLOW", "boot", "mountpoint=\"%s\"", mountpoint);
-
-    if (fuse_opt_add_arg(&args, mountpoint) == -1) {
-        fprintf(stderr, "Failed to add mountpoint to fuse args\n");
-        if (log_fp) fclose(log_fp);
-        close(base_fd);
-        return -1;
-    }
-
-    static const struct fuse_operations myfs_oper = {
-        .getattr = myfs_getattr,
-        .readdir = myfs_readdir,
-        .open    = myfs_open,
-        .create  = myfs_create,
-        .read    = myfs_read,
-        .write   = myfs_write,
-        .release = myfs_release,
-        .unlink  = myfs_unlink,
-        .mkdir   = myfs_mkdir,
-        .rmdir   = myfs_rmdir,
-        .rename  = myfs_rename,
-        .utimens = myfs_utimens,
-    };
-
-    int ret = fuse_main(args.argc, args.argv, &myfs_oper, NULL);
-
-    log_line("STOP", "/", "ALLOW", "shutdown", NULL);
-
+    log_line("START", "/", "ALLOW", "boot", "moun리
     if (log_fp) fclose(log_fp);
     if (base_fd != -1) close(base_fd);
     fuse_opt_free_args(&args);
