@@ -831,7 +831,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
     }
 
-	3) 엔트로피/빈도/스냅샷
+	// 3) 엔트로피/빈도/스냅샷
     if (state) {
         // 최대 쓰기 횟수 제한
         if (state->write_count >= MAX_WRITES_PER_FILE) {
@@ -1117,7 +1117,38 @@ int main(int argc, char *argv[]) {
     log_fp = fopen(log_path, "a");
     if (!log_fp) perror("fopen log");
 
-    log_line("START", "/", "ALLOW", "boot", "moun리
+    log_line("START", "/", "ALLOW", "boot", "mountpoint=\"%s\"", mountpoint);
+
+    // FUSE 인자에 마운트포인트 추가
+    if (fuse_opt_add_arg(&args, mountpoint) == -1) {
+        fprintf(stderr, "Failed to add mountpoint to fuse args\n");
+        if (log_fp) fclose(log_fp);
+        close(base_fd);
+        return -1;
+    }
+
+    // FUSE 콜백 테이블
+    static const struct fuse_operations myfs_oper = {
+        .getattr = myfs_getattr,
+        .readdir = myfs_readdir,
+        .open    = myfs_open,
+        .create  = myfs_create,
+        .read    = myfs_read,
+        .write   = myfs_write,
+        .release = myfs_release,
+        .unlink  = myfs_unlink,
+        .mkdir   = myfs_mkdir,
+        .rmdir   = myfs_rmdir,
+        .rename  = myfs_rename,
+        .utimens = myfs_utimens,
+    };
+	
+    // FUSE 메인 루프 진입
+    int ret = fuse_main(args.argc, args.argv, &myfs_oper, NULL);
+
+    log_line("STOP", "/", "ALLOW", "shutdown", NULL);
+
+    // 정리
     if (log_fp) fclose(log_fp);
     if (base_fd != -1) close(base_fd);
     fuse_opt_free_args(&args);
