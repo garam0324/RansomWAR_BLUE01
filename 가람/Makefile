@@ -5,8 +5,8 @@
 CC      := gcc
 CFLAGS  := -Wall -Wextra -O2 $(shell pkg-config --cflags fuse3)
 LDLIBS  := $(shell pkg-config --libs fuse3) -lm
-TARGET  := blue_hap
-SRC     := blue_hap.c
+TARGET  := blue1
+SRC     := blue1.c
 
 all: $(TARGET)
 
