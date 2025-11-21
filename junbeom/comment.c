@@ -394,7 +394,7 @@ static int unlink_rate_limit_exceeded(int *out_count_in_window) {
 }
 
 // Rename 테이블에서 path에 해당하는 RenameInfo 찾기
-// 없으면 새 엔트리 생성성
+// 없으면 새 엔트리 생성 -> rename발생 시마다 호출되어 횟수제한과 플러딩 탐지를 위한 기준 데이터 제공공
 static RenameInfo *get_rename_info(const char *path) {
     int free_idx = -1;
 
@@ -433,6 +433,7 @@ static void update_rename_path_for_info(RenameInfo *info, const char *new_path) 
 }
 
 // 오래된 rename 엔트리 정리
+// 일정시간 이상 리네임 시도가 없던 엔트리 제거(리네임테이블이 불필요하게 커져서 새파일의 리네임추적이 불가능해지는 문제 방지)
 static void cleanup_old_rename_entries(void) {
     time_t now = time(NULL);
     for (int i = 0; i < MAX_RENAME_TRACK; i++) {
