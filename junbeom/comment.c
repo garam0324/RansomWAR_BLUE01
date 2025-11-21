@@ -1033,8 +1033,13 @@ static int myfs_rmdir(const char *path) {
     if (res == -1) return -errno;
     return 0;
 }
-
-// rename 레이트 리밋 + 확장자/매직/랜섬노트 검사
+// [RENAME OPERATION]
+// 파일 이름 변경 시 호출됨.
+// - 1초 내 반복 rename → flood 공격 탐지
+// - 5회 이상 rename → 악성 rename 탐지
+// - 새 확장자가 whitelist 외일 경우 차단
+// - 랜섬노트 패턴 포함 시 차단
+// - 원본 파일의 매직넘버 검사로 위장 확장자 탐지
 static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
