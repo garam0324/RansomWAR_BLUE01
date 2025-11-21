@@ -421,7 +421,7 @@ static RenameInfo *get_rename_info(const char *path) {
     return NULL;
 }
 
-// Rename 이후 path 업데이트
+// 특정 RenameInfo포인터가 가리키는 파일의 경로를 새이름 (new_path)으로 업데이트함(리네임 이후에도 같은 파일이 같은 엔트리로 추적되도록)
 static void update_rename_path_for_info(RenameInfo *info, const char *new_path) {
     for (int i = 0; i < MAX_RENAME_TRACK; i++) {
         if (rename_table[i].in_use && &rename_table[i].info == info) {
