@@ -35,7 +35,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 // PID별로 10초 동안 읽을 수 있는 최대 바이트 수 제한
 // 랜섬웨어가 모든 파일을 빠르게 읽어 암호화하는 패턴을 제어
 #define READ_WINDOW_SEC 10
-#define MAX_READ_BYTES_PER_WINDOW (10*1024*1024) // 10초에 10MB 초과 시 차단
+#define MAX_READ_BYTES_PER_WINDOW (50*1024*1024) // 10초에 50MB 초과 시 차단
 
 // RENAME 레이트 리밋
 // 한 파일에 대해 너무 많은 rename 발생 방지
