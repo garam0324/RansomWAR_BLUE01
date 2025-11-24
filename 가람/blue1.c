@@ -120,8 +120,8 @@ static const char *SENSITIVE_EXTS[] = {
   "odb","dbf","db","mdb","accdb","sql","sqlitedb","sqlite3","asc",
   "lay6","lay","mml","sxm","otg","odg","uop","std","sxd","otp","odp",
   "wb2","slk","dif","stc","sxc","ots","ods","3dm","max","3ds","uot",
-  "stw","sxw","ott","odt","pem","p12","csr","crt","key","pfx","der", "tmp", "bin",
-  "py","rs","go","lua","ts"
+  "stw","sxw","ott","odt","pem","p12","csr","crt","key","pfx","der","tmp","bin",
+  "py","rs","go","lua","ts","dll","html","exe","json","log","old","sqlite","hwpx"
 };
 
 // 랜섬노트 이름에 자주 등장하는 키워드 패턴
