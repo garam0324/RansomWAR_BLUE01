@@ -52,7 +52,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_BLOCK_COOLDOWN_SEC 10        // hard_block이면 10 동안 쓰기 금지
 #define WRITE_FREQUENCY_WINDOW     5      // 쓰기 빈도 감지 창 (초)
 #define MAX_WRITES_IN_WINDOW       10     // 창 내 최대 쓰기 횟수
-#define FILE_SIZE_CHANGE_THRESHOLD 0.8    // 초기 크기의 80% 미만으로 줄어들면 경고
+#define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 80% 미만으로 줄어들면 경고
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
 
@@ -910,7 +910,6 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
 
         // 엔트로피 검사
-		// 엔트로피 검사
         // 정상적인 txt나 code는 패턴이 존재하여 낮은 entropy를 가짐
         // 랜섬웨어에 의해 암호화된 데이터는 높은 entropy를 갖기때문에 해당 코드에서는 7.0이상의 entropy를 갖는 행위에 대하여 차단
         double entropy = calculate_entropy(buf, size);
@@ -994,8 +993,9 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 			// 초기 크기 대비 너무 즐어들면 경고
             if (state->initial_size > 0 &&
                 (double)st_after.st_size < (double)state->initial_size * FILE_SIZE_CHANGE_THRESHOLD) {
-                log_line("WRITE", path, "FLAG", "file-size-drop",
+                log_line("WRITE", path, "BLOCKED", "file-size-drop",
                          "from=%ld to=%ld", (long)state->initial_size, (long)st_after.st_size);
+				return -EPERM;
             }
         }
 
