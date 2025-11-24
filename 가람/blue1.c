@@ -810,7 +810,7 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
 
 	// 이미 차단 상태인 PID면 바로 거부
     if(rs && rs->blocked){
-        log_line("READ", path, "BLOCK", "rate-limit-read", "pid=%d", (int)rs->pid);
+        log_line("READ", path, "BLOCKED", "rate-limit-read", "pid=%d", (int)rs->pid);
         return -EPERM;
     }
 
