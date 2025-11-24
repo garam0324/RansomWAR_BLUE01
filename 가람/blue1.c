@@ -47,8 +47,8 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define BACKUP_COUNTER_FILE "backup_count.dat" // 백업 카운터 파일명
 
 #define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
-#define HIGH_ENTROPY_THRESHOLD     7.0    // 엔트로피 경고 임계값
-#define HIGH_ENTROPY_HARD_BLOCK    7.5    // 이 이상이면 바로 차단
+#define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
+#define HIGH_ENTROPY_HARD_BLOCK    7.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC 10        // hard_block이면 10 동안 쓰기 금지
 #define WRITE_FREQUENCY_WINDOW     5      // 쓰기 빈도 감지 창 (초)
 #define MAX_WRITES_IN_WINDOW       10     // 창 내 최대 쓰기 횟수
@@ -912,7 +912,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         // 엔트로피 검사
 		// 엔트로피 검사
         // 정상적인 txt나 code는 패턴이 존재하여 낮은 entropy를 가짐
-        // 랜섬웨어에 의해 암호화된 데이터는 높은 entropy를 갖기때문에 해당 코드에서는 7.5이상의 entropy를 갖는 행위에 대하여 차단
+        // 랜섬웨어에 의해 암호화된 데이터는 높은 entropy를 갖기때문에 해당 코드에서는 7.0이상의 entropy를 갖는 행위에 대하여 차단
         double entropy = calculate_entropy(buf, size);
         if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
 			if (state) {
@@ -925,7 +925,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld cooldown=%ds", entropy, size, (size_t)offset, FILE_BLOCK_COOLDOWN_SEC);
             return -EPERM;
         } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
-			// entropy가 7.0 초과 -> 의심스러운 행위이지만 압축 파일일 수도 있으므로 로그를 남긴다.
+			// entropy가 6.5 초과 -> 의심스러운 행위이지만 압축 파일일 수도 있으므로 로그를 남긴다.
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
 	}
 
