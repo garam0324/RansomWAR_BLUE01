@@ -129,7 +129,6 @@ static const char *ransom_note_names[] = {
     "readme", "decrypt", "how_to", NULL
 };
 
-// 유틸 함수들
 // 문자열 전체를 소문자로 변환하는 함수
 // src : 원본 문자열
 // dst : 변환 결과를 저장할 버퍼
@@ -254,13 +253,11 @@ static int is_sensitive_ext(const char *ext) {
 }
 
 // path에 확장자 존재 + 화이트리스트 안에 있는지 확인하는 함수
-// exe는 항상 차단(실행 파일로 위장하는 것을 막기 위함)
 static int is_whitelisted_and_has_ext(const char *path) {
     char ext[32];
     get_lower_ext(path, ext, sizeof(ext));
 
     if (ext[0] == '\0') return 0;          // 확장자 없으면 차단
-    if (strcmp(ext, "exe") == 0) return 0; // .exe 차단
 
     // 나머지는 화이트리스트에 포함되어야 허용
     return is_sensitive_ext(ext);
@@ -480,11 +477,15 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
     return NULL;
 }
 
-// 엔트로피 계산
+// 엔트로피 계산 (샤논 엔트로피를 기반으로 한 계산)
 // 데이터가 랜덤할수록 값이 커짐
+// 공식:  H(X) = - \sum_{i=1}^{n} P(x_i) \log_2 P(x_i) 
+// 여기서 P(x)는 특정 바이트 값(0~255)이 등장할 확률
 static double calculate_entropy(const char *buf, size_t size) {
     if (size == 0) return 0.0;
 
+	// 빈도 수 측정
+    // byte별로 몇 번 등장하였는지 count한다
     int counts[256] = {0};
     for (size_t i = 0; i < size; i++) {
         counts[(unsigned char)buf[i]]++;
@@ -493,7 +494,9 @@ static double calculate_entropy(const char *buf, size_t size) {
     double entropy = 0.0;
     for (int i = 0; i < 256; i++) {
         if (counts[i] > 0) {
+	        // 확률 계산: P(x) = (해당 byte 등장 횟수) / (전체 크기)
             double p = (double)counts[i] / size;
+			
             entropy -= p * log2(p);
         }
     }
@@ -508,16 +511,18 @@ static unsigned long read_and_increment_backup_count(const char *backup_dir_path
 
     unsigned long count = 0;
 
+	// count 파일 읽기
     FILE *fp = fopen(counter_path, "r");
     if (fp) {
-        if (fscanf(fp, "%lu", &count) != 1) {
+        if (fscanf(fp, "%lu", &count) != 1) { // 기존 count 값 읽기
             count = 0;
         }
         fclose(fp);
     }
 
-    count++;
+    count++; // count 증가
 
+	// count 파일 쓰기
     fp = fopen(counter_path, "w");
     if (fp) {
         fprintf(fp, "%lu", count);
@@ -531,6 +536,8 @@ static unsigned long read_and_increment_backup_count(const char *backup_dir_path
 // $HOME/.snapshots/ 백업 디렉터리 아래에 "번호_원본경로" 형태로 복사본 만듦
 static int create_snapshot(const char *path, const char *relpath) {
     char backup_dir_path[PATH_MAX];
+
+	// HOME 환경변수가 없으면 /tmp를 사용하여 프로그램이 죽는 것을 방지
     const char *home_dir = getenv("HOME");
     if (!home_dir) home_dir = "/tmp";
 
@@ -539,6 +546,7 @@ static int create_snapshot(const char *path, const char *relpath) {
     backup_dir_path[PATH_MAX-1] = '\0';
 
     // 디렉터리 없으면 생성
+	// 소유 외에는 백업 폴더에 접근할 수 없도록 차단
     if (access(backup_dir_path, F_OK) == -1) {
         if (mkdir(backup_dir_path, 0700) == -1) {
             log_line("SNAPSHOT", path, "FAIL", "Cannot create backup dir", "errno=%d", errno);
@@ -547,12 +555,13 @@ static int create_snapshot(const char *path, const char *relpath) {
     }
 
 	// 백업 번호 가져오기
+	// 파일명이 같아도 수정 시점마다 다른 백업본을 만들기 위해 count 사용
     unsigned long backup_id = read_and_increment_backup_count(backup_dir_path);
 
     char count_str[32];
     snprintf(count_str, sizeof(count_str), "%lu", backup_id);
 
-	// relpath 안의 '/'를 '_'로 바꿔 파일명으로 사용
+	// relpath 안의 경로 구분자를 ('/') 대신 ('_')를 사용하여 경로를 하나의 파일명 처럼 관리
     char transformed_filename[PATH_MAX] = {0};
     size_t i = 0;
 
@@ -566,12 +575,15 @@ static int create_snapshot(const char *path, const char *relpath) {
     transformed_filename[i] = '\0';
 
 	// 최종 백업 경로 조합
+	// format: [백업 디렉터리] / [ID] _ [변환된_원본경로]
     char backup_full_path[PATH_MAX] = {0};
     strncpy(backup_full_path, backup_dir_path, PATH_MAX-1);
     backup_full_path[PATH_MAX-1] = '\0';
 
     size_t remaining_len = PATH_MAX - strlen(backup_full_path);
 
+	// strncat를 사용하여 오버플로우 방지 
+    // strncat은 복사할 한계를 설정할 수 있기 때문에, 물리적인 메모리 한계를 넘어서 데이터가 기록되는 것을 막아준다
     if (remaining_len > 1) {
         strncat(backup_full_path, "/", remaining_len-1);
         remaining_len = PATH_MAX - strlen(backup_full_path);
@@ -589,17 +601,20 @@ static int create_snapshot(const char *path, const char *relpath) {
         remaining_len = PATH_MAX - strlen(backup_full_path);
     }
 
+	// 경로 길이가 허용치를 초과하면 백업 실패 처리
     if (remaining_len <= 1) {
         log_line("SNAPSHOT", path, "FAIL", "Path buffer overflow", NULL);
         return -ENAMETOOLONG;
     }
 
+	// 원본 파일 열기
     int src_fd = openat(base_fd, relpath, O_RDONLY);
     if (src_fd == -1) {
         log_line("SNAPSHOT", path, "FAIL", "open source failed", "errno=%d", errno);
         return -errno;
     }
 
+	// 백업 파일도 소유자만 읽고 쓸 수 있게 권한 설정
 	// 백업 파일 open
     int dst_fd = open(backup_full_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (dst_fd == -1) {
@@ -624,6 +639,7 @@ static int create_snapshot(const char *path, const char *relpath) {
         log_line("SNAPSHOT", path, "FAIL", "read error", "errno=%d", errno);
     }
 
+	// 리소스 해제
     close(src_fd);
     close(dst_fd);
 
@@ -750,33 +766,34 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
 // create : 확장자 화이트리스트 + 랜섬노트 이름 차단
 static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
-    get_relative_path(path, rel);
+    get_relative_path(path, rel); // 절대경로 -> FUSE 상대경로로 변환
 
-	// 허용된 확장자가 아니면 차단
-    if (!is_whitelisted_and_has_ext(rel)) {
-        log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., .exe or no extension)", NULL);
-        return -EPERM;
+	// 화이트리스트에 없는 확장자 파일 생성 차단
+    if (!is_whitelisted_and_has_ext(rel)) { // 화이트리스트에 없는 확장자일 경우
+        log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., .exe or no extension)", NULL); // 로그 기록
+        return -EPERM; // 권한 없음 반환
     }
 
 	// 랜섬노트 차단
-    if (is_ransom_note(rel)) {
-        log_line("CREATE", rel, "BLOCKED", "Ransom note name pattern detected", NULL);
-        return -EPERM;
+    if (is_ransom_note(rel)) { // 파일명이 readme, decrypt 등 포함 시
+        log_line("CREATE", rel, "BLOCKED", "Ransom note name pattern detected", NULL); // 로그 기록
+        return -EPERM; // 권한 없음 반환
     }
 
 	// 실제 파일 생성
     int fd = openat(base_fd, rel, fi->flags | O_CREAT, mode);
-    if (fd == -1) {
-        log_line("CREATE", rel, "DENY", "os-error", "errno=%d", errno);
+    if (fd == -1) { // 생성 실패 시
+        log_line("CREATE", rel, "DENY", "os-error", "errno=%d", errno); // 로그 기록
         return -errno;
     }
-    fi->fh = fd;
+    fi->fh = fd; // 파일 핸들 저장
 
-    // 새 파일의 initial_size는 0으로 기록
+    // 새 파일 상태 초기화
     file_state_get(path, 0);
 
+	// 정상 생성 허용 로그 기록
     log_line("CREATE", rel, "ALLOW", "policy:basic", NULL);
-    return 0;
+    return 0; // 성공 반환환
 }
 
 // read : PID별 레이트 리밋
@@ -844,24 +861,26 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
     int fd = (int)fi->fh;
 
-	// 1) 파일 상태 조회 및 high_entropy BLOCK 쿨다운 확인
+	// 상태 조회 및 차단 대기시간 확인
+    // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
+    // 공격자가 차단 즉시 다시 write를 시도하는 것을 방지하기 위해 일정 시간 텀을 둔다.
     file_state_t *state = file_state_get(path, 0);
     time_t now_s = time(NULL);
 
-    // 이 파일이 이전 high-entropy로 인해 임시 차단 상태인지 확인
+    // 현재 해당 파일이 차단 상태인지 확인
     if (state) {
         pthread_mutex_lock(&state_mutex);
         if (state->blocked) {
             if (now_s < state->blocked_until) {
-                // 아직 쿨다운 중이면 모든 write 거부
+                // 아직 차단 해제 시간이 되지 않으면 write 거부
                 pthread_mutex_unlock(&state_mutex);
                 log_line("WRITE", path, "BLOCKED",
                          "file-temporarily-blocked-after-high-entropy",
                          "blocked_until=%ld now=%ld",
                          (long)state->blocked_until, (long)now_s);
-                return -EPERM;
+                return -EPERM; // 권한이 없으면 에러 반환
             } else {
-                // 쿨다운 시간 지났으면 차단 해제
+                // 차단 해제 시간이 지났으면 차단을 풀고 다시 write을 할 권한을 부여 
                 state->blocked = 0;
                 state->blocked_until = 0;
             }
@@ -869,29 +888,35 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         pthread_mutex_unlock(&state_mutex);
     }
 
-
-    // 2) 매직 검사 (처음 쓰기 시 헤더 체크)
+    // 매직 넘버 검사
+    // 정상 파일의 확장자를 바꿔 파일을 write할 수도 있기 때문에 확장자와 실제 파일 헤더가 일치하는지 검사하는 과정
     if (offset == 0 && size >= 16) {
         char ext[32];
         get_lower_ext(relpath, ext, sizeof(ext));
+
+		// 파일의 맨 앞부분을 write할 때, 버퍼의 내용과 확장자별 시그니처를 비교
         if (!magic_ok_for_ext(ext, (const unsigned char *)buf, 16)) {
             log_line("WRITE", relpath, "BLOCKED", "Deep Magic number mismatch (16-byte signature check failed)", NULL);
             return -EPERM;
         }
     }
 
-	// 3) 엔트로피/빈도/스냅샷
+	// 행위 기반 탐지 (엔트로피/빈도/스냅샷)
     if (state) {
-        // 최대 쓰기 횟수 제한
+        // 최대 쓰기 횟수 제한 -> 무한 루프에 빠진 프로세스나 공격의 의도를 가진 덮어쓰기 행위를 시도하는 것을 방지
         if (state->write_count >= MAX_WRITES_PER_FILE) {
             log_line("WRITE", path, "BLOCKED", "max-write-count-exceeded", "count=%d", state->write_count);
             return -EPERM;
         }
 
         // 엔트로피 검사
+		// 엔트로피 검사
+        // 정상적인 txt나 code는 패턴이 존재하여 낮은 entropy를 가짐
+        // 랜섬웨어에 의해 암호화된 데이터는 높은 entropy를 갖기때문에 해당 코드에서는 7.5이상의 entropy를 갖는 행위에 대하여 차단
         double entropy = calculate_entropy(buf, size);
         if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
 			if (state) {
+				// entropy 7.5 초과 -> 암호화를 시도하는 것으로 판단하여 즉시 차단하고 차단 해제 대기시간 적용
 				pthread_mutex_lock(&state_mutex);
 				state->blocked = 1;
 				state->blocked_until = now_s + FILE_BLOCK_COOLDOWN_SEC;
@@ -900,23 +925,25 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld cooldown=%ds", entropy, size, (size_t)offset, FILE_BLOCK_COOLDOWN_SEC);
             return -EPERM;
         } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
-			// 경고만 찍고 허용
+			// entropy가 7.0 초과 -> 의심스러운 행위이지만 압축 파일일 수도 있으므로 로그를 남긴다.
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
 	}
 
         // 쓰기 빈도 창 관리
+		// 짧은 시간 내에 기준치 이상의 write가 발생하면 공격으로 간주한다.
         pthread_mutex_lock(&state_mutex);
         int i = 0;
         while (i < state->ts_count) {
             if (difftime(now_s, state->write_timestamps[i]) > WRITE_FREQUENCY_WINDOW) {
-				// 윈도우 밖의 오래된 타임스탬프 제거
-                state->write_timestamps[i] = state->write_timestamps[state->ts_count - 1];
+				// 오래된 타임스탬프 제거
+                state->write_timestamps[i] = state->write_timestamps[state->ts_count - 1]; // 제거로 인하여 배열의 순서를 당김
                 state->ts_count--;
             } else {
                 i++;
             }
         }
 
+		// write 횟수가 기준치를 넘으면 차단
         if (state->ts_count >= MAX_WRITES_IN_WINDOW) {
             pthread_mutex_unlock(&state_mutex);
             log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "count=%d", state->ts_count);
@@ -924,7 +951,9 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
         pthread_mutex_unlock(&state_mutex);
 
-        // 첫 쓰기 시 스냅샷 (원본 보존)
+        // 첫 쓰기 시 스냅샷
+        // 해당 방어 기법을 우회하여 공격을 당할 경우를 대비하여 원본 파일을 보존한다.
+        // 파일의 첫 번째 행위가 실행되기 직전에 원본를 백업 폴더로 복사한다.
         struct stat st_before;
         if (fstat(fd, &st_before) == 0 &&
             st_before.st_size > MIN_SIZE_FOR_SNAPSHOT &&
@@ -937,23 +966,29 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         }
     }
 
-    // 4) 실제 write 수행
+    // write 수행
     ssize_t res = pwrite(fd, buf, size, offset);
     if (res == -1) {
         log_line("WRITE", path, "DENY", "os-error", "errno=%d", errno);
         return -errno;
     }
 
-    // 5) 상태 업데이트 + 크기 감소 감지지
+    // 상태 업데이트 + 크기 감소 감지
     if (state) {
         pthread_mutex_lock(&state_mutex);
 
+		// 쓰기 횟수 및 시간 갱신
         state->write_count++;
         state->last_write_time = now_s;
+		
+		// 빈도 제한 검사를 위해 타임스탬프 기록
         if (state->ts_count < MAX_WRITES_IN_WINDOW) {
             state->write_timestamps[state->ts_count++] = now_s;
         }
 
+		// 파일 크기 변화 탐지
+        // 기존 파일을 공격자의 요구사항이 적힌 짧은 txt 파일로 덮어 쓸 수 있기 때문에 
+        // write 행위 후 파일의 크기가 초기의 크기의 일정 비율 미만으로 줄어들면 경고 로그를 출력한다.
         struct stat st_after;
         if (fstat(fd, &st_after) == 0) {
 			// 초기 크기 대비 너무 즐어들면 경고
@@ -1031,67 +1066,83 @@ static int myfs_rmdir(const char *path) {
     return 0;
 }
 
-// rename : 각 파일마다 rename 레이트리밋 + 확장자/매직/랜섬노트 검사
+// rename
+// 파일 이름 변경 시 호출
+// 1초 내 반복 rename -> flood 공격 탐지
+// 5회 이상 rename -> 악성 rename 탐지
+// 새 확장자가 whitelist 외일 경우 차단
+// 랜섬노트 패턴 포함 시 차단
+// 원본 파일 매직넘버 검사로 위장 확장자 탐지
 static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
+
+	// 절대경로를 상대경로로 변환
     get_relative_path(from, relfrom);
     get_relative_path(to, relto);
 
+	// FUSE rename은 flags가 없어야 함 -> 있으면 비정상 요청으로 간주
     if (flags) return -EINVAL;
 
+	// rename 테이블 접근 시 동기화 보호
     pthread_mutex_lock(&rename_lock);
 
-	// 오래된 엔트리 제거
+	// 오래된 rename 엔트리 정리 (10*RENAME_INTERVAL 이상 지난 엔트리 제거)
     cleanup_old_rename_entries();
 
+	// 현재 파일(from)의 rename 정보 가져오기 (없으면 새로 생성)
     RenameInfo *info = get_rename_info(relfrom);
     if (!info) {
+		// 테이블 공간 부족 시 차단
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Rename tracking table full", NULL);
         return -EPERM;
     }
 
     time_t now = time(NULL);
+	
+	// 일정 시간(1초) 내 반복 rename → rename flood 공격으로 간주
     if (info->last_time != 0 && now - info->last_time < 1 /* RENAME_INTERVAL */) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Rename flood detected (per file)", NULL);
         return -EPERM;
     }
 
-	// 허용 횟수 초과
+	// 파일별 rename 횟수 5회 초과 시 차단
     if (info->count >= 5) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Rename limit exceeded (per file)", NULL);
         return -EPERM;
     }
 
-	// 새 이름이 화이트리스트 확장자가 아니면 차단
+	// 새 파일명(relto)이 화이트리스트 확장자에 없는 경우 차단
     if (!is_whitelisted_and_has_ext(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "New file extension not in whitelist policy", NULL);
         return -EPERM;
     }
 
-	// 새 이름이 랜섬노트면 차단
+	// 새 파일명이 랜섬노트 패턴에 해당하면 차단
     if (is_ransom_note(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Ransom note name pattern detected", NULL);
         return -EPERM;
     }
 
-	// rename 전 매직 검사 (위장 확장자 방지)
+	// 확장자 위장 방지를 위한 매직넘버 검증
     struct stat st;
-    unsigned char h[16] = {0};
-    ssize_t n_read = -1;
-    char ext[32];
-    get_lower_ext(relto, ext, sizeof(ext));
+    unsigned char h[16] = {0}; // 헤더 버퍼 (앞부분 16바이트만 읽음)
+    ssize_t n_read = -1; //읽은 바이트 수를 저장할 변수
+    char ext[32]; // 파일 확장자를 담을 버퍼
+    get_lower_ext(relto, ext, sizeof(ext)); // 새 파일 이름에서 확장자 추출
 
+	// 원본 파일의 실제 내용 확인 (일반 파일 일 때만 검사)
     if (fstatat(base_fd, relfrom, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(st.st_mode)) {
         n_read = read_file_magic_at_base(relfrom, h, sizeof(h));
 
         if (n_read > 0) {
-            if (!magic_ok_for_ext(ext, h, n_read)) {
+			// 매직넘버와 확장자 불일치 시 차단
+            if (!magic_ok_for_ext(ext, h, n_read)) { // 확장자와 매직넘버의 일치 여부 판단
                 pthread_mutex_unlock(&rename_lock);
                 log_line("RENAME", relto, "BLOCKED", "Deep Magic number mismatch (16-byte signature failed for new extension)", NULL);
                 return -EPERM;
@@ -1102,18 +1153,21 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
 	// 실제 rename 수행
     int res = renameat(base_fd, relfrom, base_fd, relto);
     if (res == -1) {
+		// 시스템 호출 실패 (권한 문제, 파일 없음 등)
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "DENY", "os-error", "errno=%d", errno);
         return -errno;
     }
 
-	// 통계 갱신
-    info->count++;
-    info->last_time = now;
-    update_rename_path_for_info(info, relto);
+	// rename 성공 후 정보 갱신
+    info->count++; // rename 횟수 증가
+    info->last_time = now; // 마지막 rename 시각 갱신
+    update_rename_path_for_info(info, relto); // rename 후 테이블 내 경로 갱신
 
+	// 락 해제제
     pthread_mutex_unlock(&rename_lock);
 
+	// rename 허용 로그 기록
     log_line("RENAME", relto, "ALLOW", "Rename successful (per file count updated)", "old_path=%s", relfrom);
     return 0;
 }
