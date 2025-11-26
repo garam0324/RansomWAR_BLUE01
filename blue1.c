@@ -832,7 +832,7 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 	// 화이트리스트에 없는 확장자 파일 생성 차단
     if (!is_whitelisted_and_has_ext(rel)) { // 화이트리스트에 없는 확장자일 경우
-        log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., .exe or no extension)", NULL); // 로그 기록
+        log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., no extension)", NULL); // 로그 기록
         return -EPERM; // 권한 없음 반환
     }
 
