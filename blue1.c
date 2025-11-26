@@ -51,11 +51,16 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
 #define HIGH_ENTROPY_HARD_BLOCK    7.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC    10     // hard_block이면 10 동안 쓰기 금지
-#define WRITE_FREQUENCY_WINDOW     5      // 쓰기 빈도 감지 창 (초)
-#define MAX_WRITES_IN_WINDOW       10     // 창 내 최대 쓰기 횟수
+#define WRITE_WINDOW_SEC           5      // 쓰기 빈도 감지 창 (초)
+#define MAX_WRITES_IN_WINDOW       3     // 창 내 최대 쓰기 횟수
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
+
+// WRITE 레이트 리밋용
+static time_t write_timestamps[1024];     // 최근 write 시도 시간들
+static int write_ts_count = 0;
+static pthread_mutex_t write_freq_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // READ 레이트 리밋용 구조체(PID별)
 // PID별로 읽기량을 추적하기 위함
@@ -92,8 +97,6 @@ typedef struct {
     int write_count;                                // 총 쓰기 횟수
     off_t initial_size;                             // 최초 오픈 시 파일 크기
     time_t last_write_time;                         // 마지막 쓰기 시각
-    time_t write_timestamps[MAX_WRITES_IN_WINDOW];  // 쓰기 시각들
-    int ts_count;                                   // 배열에 들어있는 개수
     int blocked;                                    // 1이면 파일에 대한 쓰기가 임시 차단 상태
     time_t blocked_until;                           // 이 시각 전까진 모든 write 막음
 } file_state_t;
@@ -371,6 +374,42 @@ static ReadStats* get_read_stats_for_current_pid(void) {
     return slot;
 }
 
+// WRITE 레이트 리밋 함수
+// 3초에 3회 이상 write 시도 시 차단
+static int write_rate_limit_exceeded(void) {
+    time_t now = time(NULL);
+
+    pthread_mutex_lock(&write_freq_lock);
+
+    int i = 0;
+    while (i < write_ts_count) {
+	if (difftime(now, write_timestamps[i]) > WRITE_WINDOW_SEC) {
+	    // 오래된 것은 배열 마지막 요소로 엎어쓰고 개수 줄이기
+	    write_timestamps[i] = write_timestamps[write_ts_count - 1];
+	    write_ts_count--;
+	}
+	else {
+	    i++;
+	}
+    }
+
+    // 현재 윈도우 내 write 시도 개수 확인
+    // 5초에 3회 이상 -> 2개까지 허용, 3번째부터 차단
+    if (write_ts_count >= (MAX_WRITES_IN_WINDOW - 1)) {
+       pthread_mutex_unlock(&write_freq_lock);
+       return 1;
+    }
+
+    // 허용되는 경우, 이번 시도 타임스탬프 추가
+    if (write_ts_count < (int)(sizeof(write_timestamps)/sizeof(write_timestamps[0]))) {
+	write_timestamps[write_ts_count++] = now;
+    }
+
+    pthread_mutex_unlock(&write_freq_lock);
+    return 0;
+}    
+
+
 // UNLINK 레이트 리밋 함수
 // 현재 시간이 기존 윈도우 시작 시간보다 UNLINK_WINDOW_SEC 이상 지났으면 윈도우를 리셋하고 카운터 다시 시작
 // 삭제 횟수를 1 증가시키고, 임계치를 초과하면 1 반환
@@ -449,7 +488,7 @@ static void cleanup_old_rename_entries(void) {
 static file_state_t* file_state_get(const char *path, off_t initial_size) {
     pthread_mutex_lock(&state_mutex);
 
-	// 이미 존재하는지 검색
+    // 이미 존재하는지 검색
     for (int i = 0; i < file_state_count; i++) {
         if (strcmp(file_states[i].path, path) == 0) {
             pthread_mutex_unlock(&state_mutex);
@@ -457,7 +496,7 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
         }
     }
 
-	// 새 엔트리 생성
+    // 새 엔트리 생성
     if (file_state_count < MAX_TRACKED_FILES) {
         file_state_t *st = &file_states[file_state_count++];
         strncpy(st->path, path, PATH_MAX - 1);
@@ -465,7 +504,6 @@ static file_state_t* file_state_get(const char *path, off_t initial_size) {
         st->write_count = 0;
         st->initial_size = initial_size;
         st->last_write_time = 0;
-        st->ts_count = 0;
         st->blocked = 0;
 		st->blocked_until = 0;
 
@@ -885,7 +923,13 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
     int fd = (int)fi->fh;
 
-	// 상태 조회 및 차단 대기시간 확인
+    // WRITE 레이트 리밋 : 5초에 3회 이상 시도 시 차단
+    if (write_rate_limit_exceeded()) {
+	log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "window=%ds max=%d", WRITE_WINDOW_SEC, MAX_WRITES_IN_WINDOW);
+	return -EPERM;
+    }
+
+    // 상태 조회 및 차단 대기시간 확인
     // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
     // 공격자가 차단 즉시 다시 write를 시도하는 것을 방지하기 위해 일정 시간 텀을 둔다.
     file_state_t *state = file_state_get(path, 0);
@@ -952,28 +996,6 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
 	}
 
-        // 쓰기 빈도 창 관리
-		// 짧은 시간 내에 기준치 이상의 write가 발생하면 공격으로 간주한다.
-        pthread_mutex_lock(&state_mutex);
-        int i = 0;
-        while (i < state->ts_count) {
-            if (difftime(now_s, state->write_timestamps[i]) > WRITE_FREQUENCY_WINDOW) {
-				// 오래된 타임스탬프 제거
-                state->write_timestamps[i] = state->write_timestamps[state->ts_count - 1]; // 제거로 인하여 배열의 순서를 당김
-                state->ts_count--;
-            } else {
-                i++;
-            }
-        }
-
-		// write 횟수가 기준치를 넘으면 차단
-        if (state->ts_count >= MAX_WRITES_IN_WINDOW) {
-            pthread_mutex_unlock(&state_mutex);
-            log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "count=%d", state->ts_count);
-            return -EPERM;
-        }
-        pthread_mutex_unlock(&state_mutex);
-
         // 첫 쓰기 시 스냅샷
         // 해당 방어 기법을 우회하여 공격을 당할 경우를 대비하여 원본 파일을 보존한다.
         // 파일의 첫 번째 행위가 실행되기 직전에 원본를 백업 폴더로 복사한다.
@@ -1003,11 +1025,6 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 		// 쓰기 횟수 및 시간 갱신
         state->write_count++;
         state->last_write_time = now_s;
-		
-		// 빈도 제한 검사를 위해 타임스탬프 기록
-        if (state->ts_count < MAX_WRITES_IN_WINDOW) {
-            state->write_timestamps[state->ts_count++] = now_s;
-        }
 
 		// 파일 크기 변화 탐지
         // 기존 파일을 공격자의 요구사항이 적힌 짧은 txt 파일로 덮어 쓸 수 있기 때문에 
