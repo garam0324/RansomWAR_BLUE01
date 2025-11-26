@@ -49,9 +49,9 @@ RansomWAR_BLUE01 (RansomShield)
 
 - 정책: 엔트로피 6.5 초과 시: 'FLAG' 로그 기록 (주의).
 
-	  엔트로피 7.0 초과 시: 'BLOCKED' 처리 및 쓰기 차단 (암호화 시도로 간주).
+	    엔트로피 7.0 초과 시: 'BLOCKED' 처리 및 쓰기 차단 (암호화 시도로 간주).
 
-	  차단 후 10초간 해당 파일에 대한 쓰기 접근(Cooldown) 강제 적용.
+	    차단 후 10초간 해당 파일에 대한 쓰기 접근(Cooldown) 강제 적용.
 
 
 2. 스냅샷(Snapshot)을 통한 데이터 복구
@@ -70,6 +70,7 @@ RansomWAR_BLUE01 (RansomShield)
 - 위장 탐지: 확장자와 실제 파일 헤더(Magic Number) 불일치 시 차단 (예: exe를 pdf로 위장).
 
 - 랜섬노트 차단: 'readme', 'decrypt' 등 랜섬노트 패턴이 포함된 파일명 생성 불가.
+
 
 4. 행위 기반 레이트 리미트(Rate Limit)
 
@@ -110,5 +111,6 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
 
