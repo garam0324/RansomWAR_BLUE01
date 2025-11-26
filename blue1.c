@@ -17,6 +17,7 @@
 #include <ctype.h>
 #include <sys/time.h>
 #include <math.h>
+#include <pwd.h>
 
 // 전역 상태
 static int base_fd = -1;                          // 실제 로우 디렉터리 FD (마운트 대상 디렉터리)
@@ -537,12 +538,36 @@ static unsigned long read_and_increment_backup_count(const char *backup_dir_path
 static int create_snapshot(const char *path, const char *relpath) {
     char backup_dir_path[PATH_MAX];
 
-	// HOME 환경변수가 없으면 /tmp를 사용하여 프로그램이 죽는 것을 방지
-    const char *home_dir = getenv("HOME");
-    if (!home_dir) home_dir = "/tmp";
+    // 마운트 경로 :$HOME/(계정명)/workspace/target
+    const char *home = getenv("HOME");
+    const char *user = getenv("USER");
+    char mountpoint[PATH_MAX];
 
-	// 백업 디렉터리 경로 : $HOME/.snapshots
-    snprintf(backup_dir_path, PATH_MAX, "%s/%s", home_dir, BACKUP_DIR_NAME);
+    // USER 없으면 /etc/passwd에서 가져오기
+    if (!user || !user[0]) {
+	struct passwd *pw = getpwuid(getuid());
+	if (pw && pw->pw_name) {
+	    user = pw->pw_name;
+	}
+    }
+
+    // $HOME/(계정명)/workspace/target
+    if (home && user && user[0]) {
+	snprintf(mountpoint, sizeof(mountpoint),"%s/%s/workspace/target", home, user);
+    }
+
+    // user 없으면 $HOME/workspace/target
+    else if (home) {
+	snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
+    }
+
+    // HOME도 없으면 /tmp/workspace/target
+    else {
+	snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
+    }
+
+    // 백업 디렉터리 경로 : $HOME/.snapshots
+    snprintf(backup_dir_path, PATH_MAX, "%s/%s", home, BACKUP_DIR_NAME);
     backup_dir_path[PATH_MAX-1] = '\0';
 
     // 디렉터리 없으면 생성
