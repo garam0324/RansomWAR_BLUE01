@@ -26,7 +26,11 @@ RansomWAR_BLUE01 (RansomShield)
 
 2. 김가람
 
-- FUSE 파일시스템 핸들러 코드 작성 및 보완
+- read, unlink, open 행위 관련 코드 구현(rate limit, 화이트리스트 확장자, 확장자/매직넘버 일치 여부 검사 등)
+
+- 코드 보완(write 쿨다운 기능 추가, 엔트로피 로직 보완, write rate limit 기능 수정(파일별 -> 전체) 등)
+
+- 일정, 회의록, Github 관리
 
 - 프로젝트 발표 담당
 
@@ -106,4 +110,5 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
