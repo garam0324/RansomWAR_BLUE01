@@ -744,13 +744,6 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
             return -EACCES;
         }
     }
-
-    // O_TRUNC 요청 차단 (open 시 O_TRUNC 옵션을 사용해 파일 크기를 0으로 만들어버리는 것을 방지하기 위함)
-    if (fi->flags & O_TRUNC) {
-	log_line("OPEN", path, "BLOCKED", "truncate-request-blocked (global policy)", "flags=0x%x", fi->flags);
-	return -EPERM; // 모든 TRUNC 거부
-    }
-
 	// 실제 open
     int fd = openat(base_fd, rel, fi->flags);
     if (fd == -1) {
