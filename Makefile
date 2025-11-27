@@ -7,7 +7,6 @@ CFLAGS  := -Wall -Wextra -O2 $(shell pkg-config --cflags fuse3)
 LDLIBS  := $(shell pkg-config --libs fuse3) -lm
 TARGET  := blue1
 SRC     := blue1.c
-MOUNTPOINT := $(HOME)/workspace/target
 
 all: $(TARGET)
 
@@ -18,7 +17,7 @@ $(TARGET): $(SRC)
 
 run: $(TARGET)
 	@echo "Running FUSE filesystem in foreground..."
-	./$(TARGET) $(MOUNTPOINT)
+	./$(TARGET) $$HOME/workspace/target
 
 umount:
 	@echo "Unmounting ~/workspace/target ..."
