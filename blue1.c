@@ -1215,28 +1215,8 @@ int main(int argc, char *argv[]) {
     const char *user = getenv("USER");
     char mountpoint[PATH_MAX];
 
-    // USER 없으면 /etc/passwd에서 가져오기
-    if (!user || !user[0]) {
-	struct passwd *pw = getpwuid(getuid());
-	if (pw && pw->pw_name) {
-	    user = pw->pw_name;
-	}
-    }
-
-    // $HOME/(계정명)/workspace/target
-    if (home && user && user[0]) {
-	snprintf(mountpoint, sizeof(mountpoint),"%s/%s/workspace/target", home, user);
-    }
-
-    // user 없으면 $HOME/workspace/target
-    else if (home) {
-	snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
-    }
-
-    // HOME도 없으면 /tmp/workspace/target
-    else {
-	snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
-    }
+    if (home) snprintf(mountpoint, sizeof(mountpoint), "%s/workspace/target", home);
+    else      snprintf(mountpoint, sizeof(mountpoint), "/tmp/workspace/target");
 
 	// 마운트 디렉터리 존재 확인
     struct stat st;
