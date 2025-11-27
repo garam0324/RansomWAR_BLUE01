@@ -581,7 +581,7 @@ static int create_snapshot(const char *path, const char *relpath) {
     if (!home_dir) home_dir = "/tmp";
 
 	// 백업 디렉터리 경로 : $HOME/.snapshots
-    snprintf(backup_dir_path, PATH_MAX, "%s/%s", home, BACKUP_DIR_NAME);
+    snprintf(backup_dir_path, PATH_MAX, "%s/%s", home_dir, BACKUP_DIR_NAME);
     backup_dir_path[PATH_MAX-1] = '\0';
 
     // 디렉터리 없으면 생성
