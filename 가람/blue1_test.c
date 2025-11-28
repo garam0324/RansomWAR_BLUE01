@@ -491,6 +491,12 @@ static int iat_on_write_and_check_block(const char *path) {
             // -> CV가 매우 작으면 (0.5% 이하) 메트로놈처럼 일정한 리듬으로 write하는 패턴
             double CV = std_ms / (st->mean_ms > 0.0 ? st->mean_ms : 1.0);
 
+			log_line("WRITE", path, "IAT-DEBUG",
+         "IAT-current-stats",
+         "samples=%d last_iat=%.2f mean_ms=%.2f std_ms=%.2f CV=%.4f threshold_CV=%.4f",
+         st->sample_count, iat_ms, st->mean_ms, std_ms, CV, IAT_LOW_JITTER_CV);
+
+
             if (CV <= IAT_LOW_JITTER_CV) {
                 // 이 PID는 "기계적인 루프"로 판단 -> 이후부터 영구 차단
                 st->flagged = 1;
