@@ -56,6 +56,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
+#define RESTORE_LOCK_SEC           (60*60) // 스냅샷 복구 후 이 시간 동안 쓰기 차단 (1시간)
 
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
@@ -1052,7 +1053,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
                 // 아직 차단 해제 시간이 되지 않으면 write 거부
                 pthread_mutex_unlock(&state_mutex);
                 log_line("WRITE", path, "BLOCKED",
-                         "file-temporarily-blocked-after-high-entropy",
+                         "file-temporarily-or-restored-locked",
                          "blocked_until=%ld now=%ld",
                          (long)state->blocked_until, (long)now_s);
                 return -EPERM; // 권한이 없으면 에러 반환
@@ -1164,6 +1165,12 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         int r = restore_latest_snapshot(path);
         if (r == 0) {
             log_line("WRITE", path, "ALLOW", "auto-restore-after-snapshot", NULL);
+
+			if (state) {
+				pthread_mutex_lock(&state_mutex);
+				state->blocked = 1;
+				state->blocked_until = now_s + RESTORE_LOCK_SEC;
+				pthread_mutex_unlock(&state_mutex);
         } else {
             // 복구 실패 시에도 로그 남김
             log_line("WRITE", path, "FAIL", "auto-restore-failed", "ret=%d", r);
