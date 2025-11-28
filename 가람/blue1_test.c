@@ -18,7 +18,6 @@
 #include <sys/time.h>
 #include <math.h>
 #include <pwd.h>
-#include <lz4.h>
 
 // 전역 상태
 static int base_fd = -1;                          // 실제 로우 디렉터리 FD (마운트 대상 디렉터리)
@@ -57,11 +56,6 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
-#define LZ_SAMPLE_SIZE             4096   // write 버퍼 앞 4KB만 샘플링
-#define LZ_MIN_SIZE                1024   // 1KB 미만이면 압출률 판단 생략
-#define LZ_RATIO_SOFT_FLAG         0.90   // 압축 후 크기 / 원본 크기 >= 0.90이면 의심
-#defien LZ_RATIO_HARD_BLOCK        0.97   // 0.97 이상이면 거의 압축 안 됨 -> 차단
-
 
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
@@ -79,6 +73,30 @@ typedef struct {
 
 static ReadStats g_read_stats[1024]; // PID별 읽기 상태 테이블 -> 여러 프로세스 동시에 추적 가능
 static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태 테이블 동기화
+
+// ===================== I/O 리듬(IAT) 분석 =====================
+// 같은 PID가 write를 어떤 "리듬"으로 보내는지 측정하는 구조체
+// - IAT_MIN_SAMPLES: 최소 몇 번 이상 write를 해야 판단할지
+// - IAT_LOW_JITTER_STD_MS: IAT 표준편차가 이 값보다 작으면 "너무 일정"하다고 판단
+// - IAT_RESET_IDLE_SEC: 이 시간 동안 활동 없으면 해당 PID 통계 리셋
+#define IAT_MIN_SAMPLES          20      // 최소 20개 IAT 샘플 이후부터 판단
+#define IAT_LOW_JITTER_STD_MS    5.0     // 표준편차 5ms 이하 → Low Jitter
+#define IAT_RESET_IDLE_SEC       30      // 30초 동안 활동 없으면 통계 리셋
+
+typedef struct {
+    pid_t pid;                 // 추적 중인 PID
+    struct timespec last_ts;   // 직전 write 시각 (MONOTONIC)
+    int has_last;              // last_ts가 유효한지 여부
+    int sample_count;          // IAT 샘플 개수
+    double mean_ms;            // IAT 평균 (ms)
+    double M2_ms;              // 분산 계산용 누적 값 (Welford 알고리즘)
+    int flagged;               // Low Jitter 패턴으로 이미 플래그 되었는지
+    time_t last_update;        // 마지막으로 이 PID에 대해 업데이트한 시각(리셋용)
+} IatStats;
+
+static IatStats g_iat_stats[1024];                  // PID별 IAT 통계 테이블
+static pthread_mutex_t g_iat_lock = PTHREAD_MUTEX_INITIALIZER; // IAT 테이블 동기화
+
 
 // Rename 레이트 리밋용 구조체(파일별)
 typedef struct {
@@ -380,6 +398,121 @@ static ReadStats* get_read_stats_for_current_pid(void) {
     return slot;
 }
 
+// 현재 FUSE 요청의 PID에 대한 IatStats 엔트리 찾기/생성
+static IatStats* get_iat_stats_for_current_pid(void) {
+    struct fuse_context *fc = fuse_get_context();
+    if (!fc) return NULL;
+
+    pid_t p = fc->pid;
+    time_t now = time(NULL);
+
+    pthread_mutex_lock(&g_iat_lock);
+
+    IatStats *slot = NULL;
+    IatStats *empty = NULL;
+
+    for (int i = 0; i < (int)(sizeof(g_iat_stats)/sizeof(g_iat_stats[0])); i++) {
+        // 오래된 엔트리는 리셋
+        if (g_iat_stats[i].pid != 0 &&
+            now - g_iat_stats[i].last_update > IAT_RESET_IDLE_SEC) {
+            memset(&g_iat_stats[i], 0, sizeof(IatStats));
+        }
+
+        if (g_iat_stats[i].pid == p) {
+            slot = &g_iat_stats[i];
+            break;
+        }
+        if (g_iat_stats[i].pid == 0 && !empty) {
+            empty = &g_iat_stats[i];
+        }
+    }
+
+    if (!slot && empty) {
+        memset(empty, 0, sizeof(IatStats));
+        empty->pid = p;
+        empty->last_update = now;
+        slot = empty;
+    }
+
+    pthread_mutex_unlock(&g_iat_lock);
+    return slot;
+}
+
+// write 호출 한 번마다 IAT를 갱신하고, Low Jitter 패턴이면 1을 반환(차단)
+static int iat_on_write_and_check_block(const char *path) {
+    IatStats *st = get_iat_stats_for_current_pid();
+    if (!st) return 0;   // 컨텍스트 없으면 그냥 패스
+
+    struct timespec now_ts;
+    clock_gettime(CLOCK_MONOTONIC, &now_ts);
+
+    double iat_ms = 0.0;
+
+    // 직전 write가 있었다면 IAT 계산
+    if (st->has_last) {
+        long sec  = now_ts.tv_sec  - st->last_ts.tv_sec;
+        long nsec = now_ts.tv_nsec - st->last_ts.tv_nsec;
+        if (nsec < 0) {
+            sec  -= 1;
+            nsec += 1000000000L;
+        }
+        iat_ms = (double)sec * 1000.0 + (double)nsec / 1.0e6;   // ms 단위
+    }
+
+    pthread_mutex_lock(&g_iat_lock);
+
+    // 현재 시각 기록
+    st->last_ts     = now_ts;
+    st->last_update = time(NULL);
+    st->has_last    = 1;
+
+    // 이미 Low Jitter로 플래그된 PID면 곧바로 차단
+    if (st->flagged) {
+        pthread_mutex_unlock(&g_iat_lock);
+        log_line("WRITE", path, "BLOCKED",
+                 "IAT-low-jitter-pattern-already-flagged", NULL);
+        return 1;
+    }
+
+    // 첫 write 이후부터 IAT 샘플 축적
+    if (iat_ms > 0.0) {
+        st->sample_count++;
+        double delta  = iat_ms - st->mean_ms;
+        st->mean_ms  += delta / st->sample_count;
+        double delta2 = iat_ms - st->mean_ms;
+        st->M2_ms    += delta * delta2;
+
+        if (st->sample_count >= IAT_MIN_SAMPLES) {
+            double variance = st->M2_ms / (st->sample_count - 1);
+            double std_ms   = sqrt(variance);
+
+            // 분산(표준편차)이 너무 작으면 → 메트로놈처럼 일정한 write 리듬
+            if (std_ms <= IAT_LOW_JITTER_STD_MS) {
+                st->flagged = 1;   // 이후부터는 전부 차단
+                double mean_ms = st->mean_ms;
+                int samples    = st->sample_count;
+                pthread_mutex_unlock(&g_iat_lock);
+
+                // 탐지 로그 (FLAG) + 차단 로그(BLOCKED)
+                log_line("WRITE", path, "FLAG",
+                         "IAT-low-jitter-write-pattern-detected",
+                         "samples=%d mean_ms=%.2f std_ms=%.2f threshold=%.2f",
+                         samples, mean_ms, std_ms, IAT_LOW_JITTER_STD_MS);
+
+                log_line("WRITE", path, "BLOCKED",
+                         "IAT-low-jitter-write-pattern-blocking",
+                         "samples=%d mean_ms=%.2f", samples, mean_ms);
+
+                return 1;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&g_iat_lock);
+    return 0;   // 아직 차단 기준 미달
+}
+
+
 // WRITE 레이트 리밋 함수
 // 3초에 3회 이상 write 시도 시 차단
 static int write_rate_limit_exceeded(void) {
@@ -547,40 +680,6 @@ static double calculate_entropy(const char *buf, size_t size) {
     }
     return entropy;
 }
-
-// LZ4 기반 "압축률 검정 (Incompressibility Test)"
-// buf: write로 들어온 데이터
-// size: buf 크기
-// 반환값: 압축 후 크기 / 원본 크기 (0.0이면 판단 안 함 또는 오류)
-static double calculate_lz_ratio(const char *buf, size_t size) {
-    if (!buf || size < LZ_MIN_SIZE) {
-        // 샘플이 너무 작으면 압축률로 암호화 여부 판단하기 애매하니까 그냥 패스
-        return 0.0;
-    }
-
-    // 샘플 크기: 앞쪽 4KB까지만 봄 (성능 & 과잉검출 방지)
-    int src_size = (int)((size > LZ_SAMPLE_SIZE) ? LZ_SAMPLE_SIZE : size);
-
-    // LZ4에서 요구하는 최대 압축 버퍼 크기 계산
-    int max_dst_size = LZ4_compressBound(src_size);
-    char *dst = (char *)malloc(max_dst_size);
-    if (!dst) {
-        return 0.0; // 메모리 부족 등 -> 판단 안 함
-    }
-
-    // 실제 압축 수행
-    int compressed_size = LZ4_compress_default(buf, dst, src_size, max_dst_size);
-    free(dst);
-
-    if (compressed_size <= 0) {
-        // 압축 실패 -> 판단 안 함
-        return 0.0;
-    }
-
-    // 압축 후 크기 / 원본 크기
-    return (double)compressed_size / (double)src_size;
-}
-
 
 // 백업 카운터 읽고 1 증가시켜 저장
 // 백업 파일 이름을 고유하게 만들기 위함
@@ -945,6 +1044,14 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 	return -EPERM;
     }
 
+	// I/O 리듬(IAT) 분석 기반 PID 차단
+	// 같은 PID가 메트로놈처럼 일정한 간격으로 write를 반복하면
+	// I/O 리듬 분산이 매우 작아져서 랜섬웨어 루프 가능성이 높다고 판단
+	if (iat_on_write_and_check_block(path)) {
+		// 함수 내부에서 로그 남김
+		return -EPERM;
+	}
+
     // 상태 조회 및 차단 대기시간 확인
     // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
     // 공격자가 차단 즉시 다시 write를 시도하는 것을 방지하기 위해 일정 시간 텀을 둔다.
@@ -987,60 +1094,45 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
 	// 행위 기반 탐지 (엔트로피/빈도/스냅샷)
     if (state) {
-        // 최대 쓰기 횟수 제한
+        // 최대 쓰기 횟수 제한 -> 무한 루프에 빠진 프로세스나 공격의 의도를 가진 덮어쓰기 행위를 시도하는 것을 방지
         if (state->write_count >= MAX_WRITES_PER_FILE) {
             log_line("WRITE", path, "BLOCKED", "max-write-count-exceeded", "count=%d", state->write_count);
             return -EPERM;
         }
 
-        // ----- (1) 엔트로피 계산 -----
+        // 엔트로피 검사
+        // 정상적인 txt나 code는 패턴이 존재하여 낮은 entropy를 가짐
+        // 랜섬웨어에 의해 암호화된 데이터는 높은 entropy를 갖기때문에 해당 코드에서는 7.0이상의 entropy를 갖는 행위에 대하여 차단
         double entropy = calculate_entropy(buf, size);
-
-        // ----- (2) LZ4 기반 압축률 계산 (Incompressibility Test) -----
-        // "암호화된 데이터는 더 이상 압축되지 않는다" 아이디어
-        double lz_ratio = calculate_lz_ratio(buf, size);
-        // lz_ratio == 0.0 이면 "판단 안 함"으로 취급
-
-        // ----- (3) 하드 차단 조건 -----
-        //  - 엔트로피가 매우 높거나
-        //  - LZ 압축률이 거의 1.0에 가까워서(거의 안 줄어들어서) 랜덤/암호문처럼 보이는 경우
-        if (entropy > HIGH_ENTROPY_HARD_BLOCK ||
-            (lz_ratio > 0.0 && lz_ratio >= LZ_RATIO_HARD_BLOCK)) {
-
-            pthread_mutex_lock(&state_mutex);
-            state->blocked = 1;
-            state->blocked_until = now_s + FILE_BLOCK_COOLDOWN_SEC;
-            pthread_mutex_unlock(&state_mutex);
-
-            log_line("WRITE", path, "BLOCKED",
-                     "excessive-high-entropy-or-incompressible",
-                     "entropy=%.2f lz_ratio=%.2f size=%zu offset=%ld cooldown=%ds",
-                     entropy, lz_ratio, size, (long)offset, FILE_BLOCK_COOLDOWN_SEC);
+        if (entropy > HIGH_ENTROPY_HARD_BLOCK) {
+			if (state) {
+				// entropy 7.5 초과 -> 암호화를 시도하는 것으로 판단하여 즉시 차단하고 차단 해제 대기시간 적용
+				pthread_mutex_lock(&state_mutex);
+				state->blocked = 1;
+				state->blocked_until = now_s + FILE_BLOCK_COOLDOWN_SEC;
+				pthread_mutex_unlock(&state_mutex);
+			}
+            log_line("WRITE", path, "BLOCKED", "excessive-high-entropy", "entropy=%.2f size=%zu offset=%ld cooldown=%ds", entropy, size, (size_t)offset, FILE_BLOCK_COOLDOWN_SEC);
             return -EPERM;
-        }
+        } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
+			// entropy가 6.5 초과 -> 의심스러운 행위이지만 압축 파일일 수도 있으므로 로그를 남긴다.
+            log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
+	}
 
-        // ----- (4) Soft-Flag 조건 -----
-        //  - 아직 하드 차단까지는 아니지만,
-        //    엔트로피가 꽤 높거나 / 압축해도 별로 안 줄어드는 데이터
-        if (entropy > HIGH_ENTROPY_THRESHOLD ||
-            (lz_ratio > 0.0 && lz_ratio >= LZ_RATIO_SOFT_FLAG)) {
-            log_line("WRITE", path, "FLAG",
-                     "suspicious-high-entropy-or-incompressible",
-                     "entropy=%.2f lz_ratio=%.2f", entropy, lz_ratio);
-        }
-
-        // ----- (5) 첫 쓰기 시 스냅샷 -----
+        // 첫 쓰기 시 스냅샷
+        // 해당 방어 기법을 우회하여 공격을 당할 경우를 대비하여 원본 파일을 보존한다.
+        // 파일의 첫 번째 행위가 실행되기 직전에 원본를 백업 폴더로 복사한다.
         struct stat st_before;
         if (fstat(fd, &st_before) == 0 &&
             st_before.st_size > MIN_SIZE_FOR_SNAPSHOT &&
             state->write_count == 0) {
             create_snapshot(path, relpath);
-
+			
+            // initial_size가 0이었다면 여기서 채워줌
             if (state->initial_size == 0)
                 state->initial_size = st_before.st_size;
         }
     }
-
 
     // write 수행
     ssize_t res = pwrite(fd, buf, size, offset);
