@@ -76,12 +76,9 @@ static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태
 
 // I/O 리듬(IAT) 분석
 // 같은 PID가 write를 어떤 "리듬"으로 보내는지 측정하는 구조체
-// - IAT_MIN_SAMPLES: 최소 몇 번 이상 write를 해야 판단할지
-// - IAT_LOW_JITTER_STD_MS: IAT 표준편차가 이 값보다 작으면 "너무 일정"하다고 판단
-// - IAT_RESET_IDLE_SEC: 이 시간 동안 활동 없으면 해당 PID 통계 리셋
-#define IAT_MIN_SAMPLES          15      // 최소 20개 IAT 샘플 이후부터 판단
-#define IAT_LOW_JITTER_STD_MS    5.0     // 표준편차 5ms 이하 → Low Jitter
-#define IAT_RESET_IDLE_SEC       300      // 300초 동안 활동 없으면 통계 리셋
+#define IAT_MIN_SAMPLES          15          // 최소 15개 IAT 샘플 이후부터 판단
+#define IAT_LOW_JITTER_CV        0.005       // 표준편차 / 평균 <= 0.5% 이하면 Low Jitter로 간주
+#define IAT_RESET_IDLE_SEC       300          // 300초 동안 활동 없으면 통계 리셋
 
 typedef struct {
     pid_t pid;                 // 추적 중인 PID
@@ -477,36 +474,44 @@ static int iat_on_write_and_check_block(const char *path) {
     // 첫 write 이후부터 IAT 샘플 축적
     if (iat_ms > 0.0) {
         st->sample_count++;
+
+        // Welford 알고리즘을 이용한 온라인 평균/분산 업데이트
         double delta  = iat_ms - st->mean_ms;
         st->mean_ms  += delta / st->sample_count;
         double delta2 = iat_ms - st->mean_ms;
         st->M2_ms    += delta * delta2;
 
         if (st->sample_count >= IAT_MIN_SAMPLES) {
+            // 분산 및 표준편차 계산
             double variance = st->M2_ms / (st->sample_count - 1);
             double std_ms   = sqrt(variance);
 
-            // 분산(표준편차)이 너무 작으면 -> 메트로놈처럼 일정한 write 리듬
-            if (std_ms <= IAT_LOW_JITTER_STD_MS) {
-                st->flagged = 1;   // 이후부터는 전부 차단
+            // CV(변동계수) = 표준편차 / 평균
+            //-> CV가 매우 작으면 (0.5% 이하) 메트로놈처럼 일정한 리듬으로 write하는 패턴
+            double CV = std_ms / (st->mean_ms > 0.0 ? st->mean_ms : 1.0);
+
+            if (CV <= IAT_LOW_JITTER_CV) {
+                st->flagged = 1;   // 이후부터는 이 PID의 모든 write 차단
                 double mean_ms = st->mean_ms;
                 int samples    = st->sample_count;
                 pthread_mutex_unlock(&g_iat_lock);
 
-                // 탐지 로그 (FLAG) + 차단 로그(BLOCKED)
+                // 탐지 로그 (FLAG)
                 log_line("WRITE", path, "FLAG",
                          "IAT-low-jitter-write-pattern-detected",
-                         "samples=%d mean_ms=%.2f std_ms=%.2f threshold=%.2f",
-                         samples, mean_ms, std_ms, IAT_LOW_JITTER_STD_MS);
+                         "samples=%d mean_ms=%.2f std_ms=%.2f CV=%.4f threshold_CV=%.4f",
+                         samples, mean_ms, std_ms, CV, IAT_LOW_JITTER_CV);
 
+                // 차단 로그 (BLOCKED)
                 log_line("WRITE", path, "BLOCKED",
                          "IAT-low-jitter-write-pattern-blocking",
-                         "samples=%d mean_ms=%.2f", samples, mean_ms);
+                         "samples=%d mean_ms=%.2f CV=%.4f", samples, mean_ms, CV);
 
                 return 1;
             }
         }
     }
+}
 
     pthread_mutex_unlock(&g_iat_lock);
     return 0;   // 아직 차단 기준 미달
