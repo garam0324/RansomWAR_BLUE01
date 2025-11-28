@@ -1169,7 +1169,8 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             log_line("WRITE", path, "FAIL", "auto-restore-failed", "ret=%d", r);
         }
 
-    return (int)res;
+    	return (int)res;
+	}
 }
 
 // release
