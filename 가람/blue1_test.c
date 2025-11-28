@@ -506,17 +506,12 @@ static int iat_on_write_and_check_block(const char *path) {
                 log_line("WRITE", path, "BLOCKED",
                          "IAT-low-jitter-write-pattern-blocking",
                          "samples=%d mean_ms=%.2f CV=%.4f", samples, mean_ms, CV);
-
-                return 1;
+				return -EPERM;
             }
         }
     }
+	pthread_mutex_unlock(&g_iat_lock)
 }
-
-    pthread_mutex_unlock(&g_iat_lock);
-    return 0;   // 아직 차단 기준 미달
-}
-
 
 // WRITE 레이트 리밋 함수
 // 3초에 3회 이상 write 시도 시 차단
