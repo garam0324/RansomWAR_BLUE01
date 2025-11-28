@@ -56,6 +56,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
+#define RESTORE_LOCK_SEC           (60*60) // 스냅샷 복구 후 이 시간 동안 쓰기 차단 (1시간)
 
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
@@ -686,6 +687,136 @@ static int create_snapshot(const char *path, const char *relpath) {
     return 0;
 }
 
+// 최신 스냅샷으로 복구
+// fuse_path: FUSE 상의 경로 (예: "/foo/bar.txt")
+// 0 이상이면 성공, 음수면 -errno 스타일 에러 리턴
+static int restore_latest_snapshot(const char *fuse_path) {
+    const char *home_dir = getenv("HOME");
+    if (!home_dir) home_dir = "/tmp";
+
+    char backup_dir_path[PATH_MAX];
+    snprintf(backup_dir_path, PATH_MAX, "%s/%s", home_dir, BACKUP_DIR_NAME);
+    backup_dir_path[PATH_MAX - 1] = '\0';
+
+    // 백업 디렉터리가 없으면 복구할 게 없음
+    struct stat st_dir;
+    if (stat(backup_dir_path, &st_dir) != 0 || !S_ISDIR(st_dir.st_mode)) {
+        log_line("RESTORE", fuse_path, "FAIL", "backup-dir-not-found", "dir=\"%s\"", backup_dir_path);
+        return -ENOENT;
+    }
+
+    // FUSE 경로 -> relpath (create_snapshot에서 썼던 relpath와 동일 형태)
+    char relpath[PATH_MAX];
+    get_relative_path(fuse_path, relpath);
+
+    // create_snapshot에서 했던 것처럼 relpath를 '_'로 바꾼 이름 생성
+    char transformed_filename[PATH_MAX] = {0};
+    size_t i = 0;
+    while (i < PATH_MAX - 1 && relpath[i] != '\0') {
+        transformed_filename[i] = (relpath[i] == '/') ? '_' : relpath[i];
+        i++;
+    }
+    transformed_filename[i] = '\0';
+
+    // backup_dir 안에서 "[숫자]_[transformed_filename]" 패턴 중 가장 큰 숫자 찾아서 최신 스냅샷으로 사용
+    DIR *dp = opendir(backup_dir_path);
+    if (!dp) {
+        log_line("RESTORE", fuse_path, "FAIL", "opendir-backup-dir-failed", "errno=%d", errno);
+        return -errno;
+    }
+
+    char best_name[PATH_MAX] = {0};
+    unsigned long best_id = 0;
+    struct dirent *de;
+
+    while ((de = readdir(dp)) != NULL) {
+        // . .. 스킵
+        if (de->d_name[0] == '.') continue;
+
+        char *underscore = strchr(de->d_name, '_');
+        if (!underscore) continue;
+
+        // '_' 뒤에 오는 부분이 transformed_filename과 같아야 함
+        if (strcmp(underscore + 1, transformed_filename) != 0) continue;
+
+        // 앞부분 숫자 파싱
+        char num_buf[32];
+        size_t len_num = underscore - de->d_name;
+        if (len_num == 0 || len_num >= sizeof(num_buf)) continue;
+
+        memcpy(num_buf, de->d_name, len_num);
+        num_buf[len_num] = '\0';
+
+        char *endptr = NULL;
+        unsigned long id = strtoul(num_buf, &endptr, 10);
+        if (endptr == num_buf || *endptr != '\0') continue;
+
+        if (id > best_id) {
+            best_id = id;
+            strncpy(best_name, de->d_name, PATH_MAX - 1);
+            best_name[PATH_MAX - 1] = '\0';
+        }
+    }
+    closedir(dp);
+
+    if (best_id == 0 || best_name[0] == '\0') {
+        log_line("RESTORE", fuse_path, "FAIL", "snapshot-not-found-for-file",
+                 "relpath=\"%s\"", relpath);
+        return -ENOENT;
+    }
+
+    // 스냅샷 전체 경로 조합
+    char snapshot_path[PATH_MAX];
+    snprintf(snapshot_path, PATH_MAX, "%s/%s", backup_dir_path, best_name);
+    snapshot_path[PATH_MAX - 1] = '\0';
+
+    // 스냅샷 열기
+    int src_fd = open(snapshot_path, O_RDONLY);
+    if (src_fd == -1) {
+        log_line("RESTORE", fuse_path, "FAIL", "open-snapshot-failed",
+                 "errno=%d path=\"%s\"", errno, snapshot_path);
+        return -errno;
+    }
+
+    // 원본 파일은 base_fd 기준 relpath에 직접 써서 복구 (FUSE 레이어 우회)
+    int dst_fd = openat(base_fd, relpath, O_WRONLY | O_TRUNC | O_CREAT, 0600);
+    if (dst_fd == -1) {
+        int e = errno;
+        close(src_fd);
+        log_line("RESTORE", fuse_path, "FAIL", "open-dst-failed",
+                 "errno=%d relpath=\"%s\"", e, relpath);
+        return -e;
+    }
+
+    // 실제 복사
+    char buf[4096];
+    ssize_t n;
+    int copy_err = 0;
+
+    while ((n = read(src_fd, buf, sizeof(buf))) > 0) {
+        ssize_t w = write(dst_fd, buf, n);
+        if (w != n) {
+            copy_err = (w < 0) ? errno : EIO;
+            break;
+        }
+    }
+    if (n < 0 && copy_err == 0) {
+        copy_err = errno;
+    }
+
+    close(src_fd);
+    close(dst_fd);
+
+    if (copy_err != 0) {
+        log_line("RESTORE", fuse_path, "FAIL", "copy-error", "errno=%d", copy_err);
+        return -copy_err;
+    }
+
+    log_line("RESTORE", fuse_path, "ALLOW", "restore-ok",
+             "snapshot=\"%s\" relpath=\"%s\"", snapshot_path, relpath);
+    return 0;
+}
+
 // open 시 의심 파일 판단
 // 화이트리스트 확장자인데 매직 넘버가 안 맞거나 화이트리스트 확장자가 아니면 차단
 static int is_suspicious_for_open(const char *relpath) {
@@ -911,6 +1042,9 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     file_state_t *state = file_state_get(path, 0);
     time_t now_s = time(NULL);
 
+    // 이번 write에서 스냅샷을 찍었는지 표시할 플래그
+    int snapshot_taken = 0;
+
     // 현재 해당 파일이 차단 상태인지 확인
     if (state) {
         pthread_mutex_lock(&state_mutex);
@@ -919,7 +1053,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
                 // 아직 차단 해제 시간이 되지 않으면 write 거부
                 pthread_mutex_unlock(&state_mutex);
                 log_line("WRITE", path, "BLOCKED",
-                         "file-temporarily-blocked-after-high-entropy",
+                         "file-temporarily-or-restored-locked",
                          "blocked_until=%ld now=%ld",
                          (long)state->blocked_until, (long)now_s);
                 return -EPERM; // 권한이 없으면 에러 반환
@@ -979,7 +1113,10 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         if (fstat(fd, &st_before) == 0 &&
             st_before.st_size > MIN_SIZE_FOR_SNAPSHOT &&
             state->write_count == 0) {
-            create_snapshot(path, relpath);
+            // 스냅샷 생성
+            if (create_snapshot(path, relpath) == 0) {
+                snapshot_taken = 1; // 이번 write에서 백업이 생성됨
+            }
 			
             // initial_size가 0이었다면 여기서 채워줌
             if (state->initial_size == 0)
@@ -1024,7 +1161,24 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         log_line("WRITE", path, "ALLOW", "state-tracking-missed", "size=%zu offset=%ld", size, (long)offset);
     }
 
-    return (int)res;
+    if (snapshot_taken) {
+        int r = restore_latest_snapshot(path);
+        if (r == 0) {
+            log_line("WRITE", path, "ALLOW", "auto-restore-after-snapshot", NULL);
+
+			if (state) {
+				pthread_mutex_lock(&state_mutex);
+				state->blocked = 1;
+				state->blocked_until = now_s + RESTORE_LOCK_SEC;
+				pthread_mutex_unlock(&state_mutex);
+        } else {
+            // 복구 실패 시에도 로그 남김
+            log_line("WRITE", path, "FAIL", "auto-restore-failed", "ret=%d", r);
+        }
+
+    	return (int)res;
+	}
+    }
 }
 
 // release
@@ -1181,7 +1335,7 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     info->last_time = now; // 마지막 rename 시각 갱신
     update_rename_path_for_info(info, relto); // rename 후 테이블 내 경로 갱신
 
-	// 락 해제제
+	// 락 해제
     pthread_mutex_unlock(&rename_lock);
 
 	// rename 허용 로그 기록
