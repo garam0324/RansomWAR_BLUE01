@@ -81,7 +81,7 @@ static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태
 // - IAT_RESET_IDLE_SEC: 이 시간 동안 활동 없으면 해당 PID 통계 리셋
 #define IAT_MIN_SAMPLES          15      // 최소 20개 IAT 샘플 이후부터 판단
 #define IAT_LOW_JITTER_STD_MS    5.0     // 표준편차 5ms 이하 → Low Jitter
-#define IAT_RESET_IDLE_SEC       300      // 30초 동안 활동 없으면 통계 리셋
+#define IAT_RESET_IDLE_SEC       300      // 300초 동안 활동 없으면 통계 리셋
 
 typedef struct {
     pid_t pid;                 // 추적 중인 PID
