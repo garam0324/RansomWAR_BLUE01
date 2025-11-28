@@ -705,7 +705,7 @@ static int restore_latest_snapshot(const char *fuse_path) {
         return -ENOENT;
     }
 
-    // FUSE 경로 → relpath (create_snapshot에서 썼던 relpath와 동일 형태)
+    // FUSE 경로 -> relpath (create_snapshot에서 썼던 relpath와 동일 형태)
     char relpath[PATH_MAX];
     get_relative_path(fuse_path, relpath);
 
@@ -736,7 +736,7 @@ static int restore_latest_snapshot(const char *fuse_path) {
         char *underscore = strchr(de->d_name, '_');
         if (!underscore) continue;
 
-        // '_' 뒤에 오는 부분이 우리가 만든 transformed_filename과 같아야 함
+        // '_' 뒤에 오는 부분이 transformed_filename과 같아야 함
         if (strcmp(underscore + 1, transformed_filename) != 0) continue;
 
         // 앞부분 숫자 파싱
