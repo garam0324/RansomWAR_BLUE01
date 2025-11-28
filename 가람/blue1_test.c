@@ -435,17 +435,18 @@ static IatStats* get_iat_stats_for_current_pid(void) {
     return slot;
 }
 
-// write 호출 한 번마다 IAT를 갱신하고, Low Jitter 패턴이면 1을 반환(차단)
+// write 호출 한 번마다 IAT를 갱신하고,
+// write 간 간격의 변동이 거의 없는 PID면 1을 반환하여 차단
 static int iat_on_write_and_check_block(const char *path) {
     IatStats *st = get_iat_stats_for_current_pid();
-    if (!st) return 0;   // 컨텍스트 없으면 그냥 패스
+    if (!st) return 0;   // FUSE 컨텍스트 없으면 그냥 통과
 
     struct timespec now_ts;
     clock_gettime(CLOCK_MONOTONIC, &now_ts);
 
     double iat_ms = 0.0;
 
-    // 직전 write가 있었다면 IAT 계산
+    // 직전 write가 있었다면 IAT(Inter-Arrival Time) 계산
     if (st->has_last) {
         long sec  = now_ts.tv_sec  - st->last_ts.tv_sec;
         long nsec = now_ts.tv_nsec - st->last_ts.tv_nsec;
@@ -458,7 +459,7 @@ static int iat_on_write_and_check_block(const char *path) {
 
     pthread_mutex_lock(&g_iat_lock);
 
-    // 현재 시각 기록
+    // 현재 시각을 "직전 시각"으로 갱신
     st->last_ts     = now_ts;
     st->last_update = time(NULL);
     st->has_last    = 1;
@@ -487,13 +488,16 @@ static int iat_on_write_and_check_block(const char *path) {
             double std_ms   = sqrt(variance);
 
             // CV(변동계수) = 표준편차 / 평균
-            //-> CV가 매우 작으면 (0.5% 이하) 메트로놈처럼 일정한 리듬으로 write하는 패턴
+            // -> CV가 매우 작으면 (0.5% 이하) 메트로놈처럼 일정한 리듬으로 write하는 패턴
             double CV = std_ms / (st->mean_ms > 0.0 ? st->mean_ms : 1.0);
 
             if (CV <= IAT_LOW_JITTER_CV) {
-                st->flagged = 1;   // 이후부터는 이 PID의 모든 write 차단
+                // 이 PID는 "기계적인 루프"로 판단 -> 이후부터 영구 차단
+                st->flagged = 1;
+
                 double mean_ms = st->mean_ms;
-                int samples    = st->sample_count;
+                int    samples = st->sample_count;
+
                 pthread_mutex_unlock(&g_iat_lock);
 
                 // 탐지 로그 (FLAG)
@@ -505,13 +509,19 @@ static int iat_on_write_and_check_block(const char *path) {
                 // 차단 로그 (BLOCKED)
                 log_line("WRITE", path, "BLOCKED",
                          "IAT-low-jitter-write-pattern-blocking",
-                         "samples=%d mean_ms=%.2f CV=%.4f", samples, mean_ms, CV);
-				return -EPERM;
+                         "samples=%d mean_ms=%.2f CV=%.4f",
+                         samples, mean_ms, CV);
+
+                return 1;
             }
         }
     }
-	pthread_mutex_unlock(&g_iat_lock)
+
+    // 아직 차단 조건에 도달하지 않음 -> 잠금 해제 후 통과
+    pthread_mutex_unlock(&g_iat_lock);
+    return 0;
 }
+
 
 // WRITE 레이트 리밋 함수
 // 3초에 3회 이상 write 시도 시 차단
