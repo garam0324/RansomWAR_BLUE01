@@ -56,6 +56,9 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
+#define CHI_SUSPECT_LOW            200.0  // 너무 균등한 분포(암호화)
+#define CHI_SUSPECT_HIGH           800.0  // 너무 정형적인 텍스트보다는 낮은 상한
+#define CHI_MIN_SAMPLE_SIZE        512    // 통계적으로 의미 있는 최소 샘플 크기
 
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
@@ -127,6 +130,95 @@ static const char *SENSITIVE_EXTS[] = {
   "stw","sxw","ott","odt","pem","p12","csr","crt","key","pfx","der","tmp","bin",
   "py","rs","go","lua","ts","dll","html","exe","json","log","old","sqlite","hwpx"
 };
+
+// 카이제곱 기반 암호화 탐지 확장 코드
+// 샘플이 너무 작으면 통계가 불안정 → 버퍼가 이정도는 되어야 의미 있는 판단 가능
+#define CHI_MIN_SAMPLE_SIZE        256
+// 텍스트/코드: 공백/문자 빈도 불균형 -> χ² 값이 보통 수천~수만
+#define CHI_TEXT_BLOCK_THRESHOLD   300.0
+// 문서/DB(구조적 바이너리): 포맷 구조가 있는 데이터 -> χ² 보통 수백~수천
+#define CHI_BIN_BLOCK_THRESHOLD    200.0
+
+// 텍스트/코드 계열 확장자 목록 (비텍스트는 나머지)
+static const char *TEXT_EXTS[] = {
+    "txt","log","rtf","md",
+    "c","h","cpp","hpp","cc","hh","asm",
+    "py","java","js","ts","tsc","rs","go",
+    "rb","sh","pl","lua","vb","vbs",
+    "asp","php","jsp","ps1","bat","cmd",
+    "json","xml","html","htm","csv","ini",
+    "cfg","yml","yaml",
+    "doc","docx","dot","dotx",
+    "ppt","pptx",
+    "xls","xlsx",
+    "suo","sln",
+    "msg","pst","ost",
+    NULL
+};
+
+// 확장자 유형 분류용 enum
+typedef enum {
+    EXT_KIND_TEXT = 0,
+    EXT_KIND_STRUCTURED_BIN,   // PDF, DOCX, HWP, DB 등
+    EXT_KIND_RANDOM_LIKE,      // ZIP, RAR, MP4 등(원래부터 랜덤)
+    EXT_KIND_OTHER
+} ext_kind_t;
+
+// "원래부터 엔트로피 높은" 확장자(차단 대상 아님)
+static const char *RANDOM_LIKE_EXTS[] = {
+    "zip","7z","rar","gz","tgz","bz2",
+    "mp4","mkv","avi","mov","wmv","flv","3gp","3g2",
+    "mp3","wav","wma",
+    "iso","vdi","vmdk","vmx",
+    NULL
+};
+
+// 문서/DB 등 "암호화 시 분포 붕괴를 감지 가능한" 바이너리
+static const char *STRUCTURED_BIN_EXTS[] = {
+    "pdf","hwp","hwpx","doc","docx","dot","dotx",
+    "ppt","pptx",
+    "xls","xlsx",
+    "mdb","accdb",
+    "db","dbf","sqlite","sqlite3","sqlitedb",
+    "ost","pst","msg",
+    NULL
+};
+
+// 확장자 분류 함수
+static ext_kind_t classify_ext_kind(const char *ext) {
+    if (!ext || !*ext) return EXT_KIND_OTHER;
+
+    for (int i = 0; TEXT_EXTS[i]; i++)
+        if (!strcmp(ext, TEXT_EXTS[i])) return EXT_KIND_TEXT;
+
+    for (int i = 0; RANDOM_LIKE_EXTS[i]; i++)
+        if (!strcmp(ext, RANDOM_LIKE_EXTS[i])) return EXT_KIND_RANDOM_LIKE;
+
+    for (int i = 0; STRUCTURED_BIN_EXTS[i]; i++)
+        if (!strcmp(ext, STRUCTURED_BIN_EXTS[i])) return EXT_KIND_STRUCTURED_BIN;
+
+    return EXT_KIND_OTHER;
+}
+
+// χ² 통계량 계산
+static double calculate_chi_square(const unsigned char *buf, size_t size) {
+    if (size == 0 || size < CHI_MIN_SAMPLE_SIZE) return 0.0;
+
+    long counts[256] = {0};
+    for (size_t i = 0; i < size; i++)
+        counts[(unsigned char)buf[i]]++;
+
+    double expected = (double)size / 256.0;
+    double chi_sq = 0.0;
+
+    for (int i = 0; i < 256; i++) {
+        double diff = counts[i] - expected;
+        chi_sq += (diff * diff) / expected;
+    }
+
+    return chi_sq;
+}
+
 
 // 랜섬노트 이름에 자주 등장하는 키워드 패턴
 static const char *ransom_note_names[] = {
@@ -970,6 +1062,31 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         } else if (entropy > HIGH_ENTROPY_THRESHOLD) {
 			// entropy가 6.5 초과 -> 의심스러운 행위이지만 압축 파일일 수도 있으므로 로그를 남긴다.
             log_line("WRITE", path, "FLAG", "high-entropy", "entropy=%.2f", entropy);
+	}
+
+	// 카이제곱 기반 분포 검사
+	char ext[32];
+	get_lower_ext(rel, ext, sizeof(ext));
+
+	ext_kind_t kind = classify_ext_kind(ext);
+
+	if (kind == EXT_KIND_TEXT || kind == EXT_KIND_STRUCTURED_BIN) {
+    	double chi = calculate_chi_square((unsigned char*)buf, size);
+    	double thr = (kind == EXT_KIND_TEXT)
+             		    ? CHI_TEXT_BLOCK_THRESHOLD
+     	     			: CHI_BIN_BLOCK_THRESHOLD;
+
+    	if (chi > 0.0 && chi < thr) {
+        	// 균등한 랜덤 분포 → 암호화 데이터 가능성 매우 높음
+        	log_line("WRITE", path, "BLOCK", "chi-square-uniform-like",
+            	     "chi=%.2f thr=%.1f size=%zu ext=%s kind=%d",
+                	 chi, thr, size, ext, (int)kind);
+        	return -EPERM;
+    	} else if (chi > 0.0) {
+            	log_line("WRITE", path, "FLAG", "chi-square-check",
+            	     "chi=%.2f thr=%.1f size=%zu ext=%s kind=%d",
+                	 chi, thr, size, ext, (int)kind);
+    	}
 	}
 
         // 첫 쓰기 시 스냅샷
