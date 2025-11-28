@@ -1163,7 +1163,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     if (snapshot_taken) {
         int r = restore_latest_snapshot(path);
         if (r == 0) {
-            log_lint("WRITE", paht, "ALLOW", "auto-restore-after-snapshot", NULL);
+            log_line("WRITE", path, "ALLOW", "auto-restore-after-snapshot", NULL);
         } else {
             // 복구 실패 시에도 로그 남김
             log_line("WRITE", path, "FAIL", "auto-restore-failed", "ret=%d", r);
