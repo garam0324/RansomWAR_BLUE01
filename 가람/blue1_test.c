@@ -74,14 +74,14 @@ typedef struct {
 static ReadStats g_read_stats[1024]; // PID별 읽기 상태 테이블 -> 여러 프로세스 동시에 추적 가능
 static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태 테이블 동기화
 
-// ===================== I/O 리듬(IAT) 분석 =====================
+// I/O 리듬(IAT) 분석
 // 같은 PID가 write를 어떤 "리듬"으로 보내는지 측정하는 구조체
 // - IAT_MIN_SAMPLES: 최소 몇 번 이상 write를 해야 판단할지
 // - IAT_LOW_JITTER_STD_MS: IAT 표준편차가 이 값보다 작으면 "너무 일정"하다고 판단
 // - IAT_RESET_IDLE_SEC: 이 시간 동안 활동 없으면 해당 PID 통계 리셋
-#define IAT_MIN_SAMPLES          20      // 최소 20개 IAT 샘플 이후부터 판단
+#define IAT_MIN_SAMPLES          15      // 최소 20개 IAT 샘플 이후부터 판단
 #define IAT_LOW_JITTER_STD_MS    5.0     // 표준편차 5ms 이하 → Low Jitter
-#define IAT_RESET_IDLE_SEC       30      // 30초 동안 활동 없으면 통계 리셋
+#define IAT_RESET_IDLE_SEC       300      // 30초 동안 활동 없으면 통계 리셋
 
 typedef struct {
     pid_t pid;                 // 추적 중인 PID
@@ -486,7 +486,7 @@ static int iat_on_write_and_check_block(const char *path) {
             double variance = st->M2_ms / (st->sample_count - 1);
             double std_ms   = sqrt(variance);
 
-            // 분산(표준편차)이 너무 작으면 → 메트로놈처럼 일정한 write 리듬
+            // 분산(표준편차)이 너무 작으면 -> 메트로놈처럼 일정한 write 리듬
             if (std_ms <= IAT_LOW_JITTER_STD_MS) {
                 st->flagged = 1;   // 이후부터는 전부 차단
                 double mean_ms = st->mean_ms;
