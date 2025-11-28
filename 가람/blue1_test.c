@@ -1066,7 +1066,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
 	// 카이제곱 기반 분포 검사
 	char ext[32];
-	get_lower_ext(rel, ext, sizeof(ext));
+	get_lower_ext(relpath, ext, sizeof(ext));
 
 	ext_kind_t kind = classify_ext_kind(ext);
 
