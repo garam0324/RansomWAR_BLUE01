@@ -28,7 +28,7 @@ RansomWAR_BLUE01 (RansomShield)
 
 - read, unlink, open 행위 관련 코드 구현(rate limit, 화이트리스트 확장자, 확장자/매직넘버 일치 여부 검사 등)
 
-- 코드 보완(write 쿨다운 기능 추가, 엔트로피 로직 보완, write rate limit 기능 보완(파일별 -> 전체) 등)
+- 코드 보완(write 쿨다운 기능 추가, 엔트로피 로직 보완, write rate limit 기능 보완(파일별 -> 전체), 스냅샷 복구 기능 추가 등)
 
 - 일정, 회의록, Github 관리
 
@@ -111,6 +111,7 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
 
 
