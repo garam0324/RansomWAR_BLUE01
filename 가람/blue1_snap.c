@@ -1334,7 +1334,7 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     info->last_time = now; // 마지막 rename 시각 갱신
     update_rename_path_for_info(info, relto); // rename 후 테이블 내 경로 갱신
 
-	// 락 해제제
+	// 락 해제
     pthread_mutex_unlock(&rename_lock);
 
 	// rename 허용 로그 기록
