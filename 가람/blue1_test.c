@@ -74,27 +74,6 @@ typedef struct {
 static ReadStats g_read_stats[1024]; // PID별 읽기 상태 테이블 -> 여러 프로세스 동시에 추적 가능
 static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태 테이블 동기화
 
-// I/O 리듬(IAT) 분석
-// 같은 PID가 write를 어떤 "리듬"으로 보내는지 측정하는 구조체
-#define IAT_MIN_SAMPLES          15          // 최소 15개 IAT 샘플 이후부터 판단
-#define IAT_LOW_JITTER_CV        0.005       // 표준편차 / 평균 <= 0.5% 이하면 Low Jitter로 간주
-#define IAT_RESET_IDLE_SEC       300          // 300초 동안 활동 없으면 통계 리셋
-
-typedef struct {
-    pid_t pid;                 // 추적 중인 PID
-    struct timespec last_ts;   // 직전 write 시각 (MONOTONIC)
-    int has_last;              // last_ts가 유효한지 여부
-    int sample_count;          // IAT 샘플 개수
-    double mean_ms;            // IAT 평균 (ms)
-    double M2_ms;              // 분산 계산용 누적 값 (Welford 알고리즘)
-    int flagged;               // Low Jitter 패턴으로 이미 플래그 되었는지
-    time_t last_update;        // 마지막으로 이 PID에 대해 업데이트한 시각(리셋용)
-} IatStats;
-
-static IatStats g_iat_stats[1024];                  // PID별 IAT 통계 테이블
-static pthread_mutex_t g_iat_lock = PTHREAD_MUTEX_INITIALIZER; // IAT 테이블 동기화
-
-
 // Rename 레이트 리밋용 구조체(파일별)
 typedef struct {
     int count;         // 이 파일에 대해 지금까지 rename이 시도된 횟수
@@ -153,6 +132,25 @@ static const char *SENSITIVE_EXTS[] = {
 static const char *ransom_note_names[] = {
     "readme", "decrypt", "how_to", NULL
 };
+
+// =================================================================================
+// [Novelty] I/O Rhythm Analysis (IAT Variance) 구조체 및 변수
+// =================================================================================
+// 목적: 기계적인 쓰기 패턴(극도로 낮은 분산)을 탐지하여 사람이 아닌 봇을 구분
+#define IAT_HISTORY_SIZE 10 // 분산 계산을 위한 최근 10개 간격 저장
+#define IAT_MIN_SAMPLES 5   // 최소 5개 이상 샘플이 모여야 판단
+
+typedef struct {
+    pid_t pid;
+    struct timespec last_write_ts; // 마지막 쓰기 시각 (나노초 정밀도)
+    double intervals[IAT_HISTORY_SIZE]; // IAT 기록 (단위: 초)
+    int idx;        // 원형 버퍼 인덱스
+    int count;      // 샘플 개수
+    int blocked;    // 리듬 기반 차단 여부
+} IORhythmStats;
+
+static IORhythmStats g_io_rhythm[1024];
+static pthread_mutex_t g_rhythm_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // 문자열 전체를 소문자로 변환하는 함수
 // src : 원본 문자열
@@ -248,6 +246,98 @@ static void log_line(const char *action, const char *path, const char *result,
         fflush(log_fp); // 즉시 디스크에 반영
     }
     pthread_mutex_unlock(&log_lock);
+}
+
+// =================================================================================
+// [Novelty Implementation] I/O Rhythm Analysis (IAT Variance)
+// =================================================================================
+// PID별로 write 요청 간의 시간 간격(IAT)의 분산을 계산하여 기계적 패턴 탐지
+// 반환값: 0(정상/판단보류), 1(이미 차단됨), 2(봇 탐지됨-새로 차단)
+static int check_io_rhythm_anomaly(pid_t pid) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now); // 정밀 시간 측정
+
+    pthread_mutex_lock(&g_rhythm_lock);
+    
+    IORhythmStats *stats = NULL;
+    IORhythmStats *empty = NULL;
+
+    // PID 찾기
+    for(int i=0; i<1024; i++) {
+        if (g_io_rhythm[i].pid == pid) {
+            stats = &g_io_rhythm[i];
+            break;
+        }
+        if (g_io_rhythm[i].pid == 0 && !empty) {
+            empty = &g_io_rhythm[i];
+        }
+    }
+
+    // 없으면 새로 할당
+    if (!stats && empty) {
+        stats = empty;
+        stats->pid = pid;
+        stats->last_write_ts = now;
+        stats->idx = 0;
+        stats->count = 0;
+        stats->blocked = 0;
+        pthread_mutex_unlock(&g_rhythm_lock);
+        return 0; // 데이터 부족으로 패스
+    }
+
+    if (!stats) {
+        pthread_mutex_unlock(&g_rhythm_lock);
+        return 0; // 테이블 꽉 참
+    }
+
+    if (stats->blocked) {
+        pthread_mutex_unlock(&g_rhythm_lock);
+        return 1; // 이미 차단됨
+    }
+
+    // IAT 계산 (초 단위, 소수점 포함)
+    double dt = (now.tv_sec - stats->last_write_ts.tv_sec) + 
+                (now.tv_nsec - stats->last_write_ts.tv_nsec) / 1e9;
+    
+    stats->last_write_ts = now;
+
+    // 너무 긴 간격(예: 5초 이상)은 세션이 끊긴 것으로 보고 리셋 (사람이 쉰 경우)
+    if (dt > 5.0) {
+        stats->count = 0;
+        stats->idx = 0;
+        pthread_mutex_unlock(&g_rhythm_lock);
+        return 0;
+    }
+
+    // IAT 저장 (원형 버퍼)
+    stats->intervals[stats->idx] = dt;
+    stats->idx = (stats->idx + 1) % IAT_HISTORY_SIZE;
+    if (stats->count < IAT_HISTORY_SIZE) stats->count++;
+
+    // 샘플이 충분히 모이면 분산 계산
+    if (stats->count >= IAT_MIN_SAMPLES) {
+        double sum = 0.0;
+        for(int i=0; i<stats->count; i++) sum += stats->intervals[i];
+        double mean = sum / stats->count;
+
+        double sq_sum = 0.0;
+        for(int i=0; i<stats->count; i++) {
+            sq_sum += (stats->intervals[i] - mean) * (stats->intervals[i] - mean);
+        }
+        double variance = sq_sum / stats->count;
+
+        // [핵심 로직] IAT 분산이 극도로 낮음 (기계적인 반복)
+        // 분산 < 0.000001 (매우 일정함) && 간격 < 0.1s (빠르게 반복됨)
+        // => 이는 사람이 절대 할 수 없는 '기계적 리듬'임
+        if (variance < 0.000001 && mean < 0.1) { 
+            stats->blocked = 1;
+            pthread_mutex_unlock(&g_rhythm_lock);
+            return 2; // 기계적 리듬 탐지됨 (차단)
+        }
+    }
+
+    pthread_mutex_unlock(&g_rhythm_lock);
+    return 0;
 }
 
 // 파일 헤더(매직 넘버) 읽기 함수
@@ -394,140 +484,6 @@ static ReadStats* get_read_stats_for_current_pid(void) {
     pthread_mutex_unlock(&g_read_lock);
     return slot;
 }
-
-// 현재 FUSE 요청의 PID에 대한 IatStats 엔트리 찾기/생성
-static IatStats* get_iat_stats_for_current_pid(void) {
-    struct fuse_context *fc = fuse_get_context();
-    if (!fc) return NULL;
-
-    pid_t p = fc->pid;
-    time_t now = time(NULL);
-
-    pthread_mutex_lock(&g_iat_lock);
-
-    IatStats *slot = NULL;
-    IatStats *empty = NULL;
-
-    for (int i = 0; i < (int)(sizeof(g_iat_stats)/sizeof(g_iat_stats[0])); i++) {
-        // 오래된 엔트리는 리셋
-        if (g_iat_stats[i].pid != 0 &&
-            now - g_iat_stats[i].last_update > IAT_RESET_IDLE_SEC) {
-            memset(&g_iat_stats[i], 0, sizeof(IatStats));
-        }
-
-        if (g_iat_stats[i].pid == p) {
-            slot = &g_iat_stats[i];
-            break;
-        }
-        if (g_iat_stats[i].pid == 0 && !empty) {
-            empty = &g_iat_stats[i];
-        }
-    }
-
-    if (!slot && empty) {
-        memset(empty, 0, sizeof(IatStats));
-        empty->pid = p;
-        empty->last_update = now;
-        slot = empty;
-    }
-
-    pthread_mutex_unlock(&g_iat_lock);
-    return slot;
-}
-
-// write 호출 한 번마다 IAT를 갱신하고,
-// write 간 간격의 변동이 거의 없는 PID면 1을 반환하여 차단
-static int iat_on_write_and_check_block(const char *path) {
-    IatStats *st = get_iat_stats_for_current_pid();
-    if (!st) return 0;   // FUSE 컨텍스트 없으면 그냥 통과
-
-    struct timespec now_ts;
-    clock_gettime(CLOCK_MONOTONIC, &now_ts);
-
-    double iat_ms = 0.0;
-
-    // 직전 write가 있었다면 IAT(Inter-Arrival Time) 계산
-    if (st->has_last) {
-        long sec  = now_ts.tv_sec  - st->last_ts.tv_sec;
-        long nsec = now_ts.tv_nsec - st->last_ts.tv_nsec;
-        if (nsec < 0) {
-            sec  -= 1;
-            nsec += 1000000000L;
-        }
-        iat_ms = (double)sec * 1000.0 + (double)nsec / 1.0e6;   // ms 단위
-    }
-
-    pthread_mutex_lock(&g_iat_lock);
-
-    // 현재 시각을 "직전 시각"으로 갱신
-    st->last_ts     = now_ts;
-    st->last_update = time(NULL);
-    st->has_last    = 1;
-
-    // 이미 Low Jitter로 플래그된 PID면 곧바로 차단
-    if (st->flagged) {
-        pthread_mutex_unlock(&g_iat_lock);
-        log_line("WRITE", path, "BLOCKED",
-                 "IAT-low-jitter-pattern-already-flagged", NULL);
-        return 1;
-    }
-
-    // 첫 write 이후부터 IAT 샘플 축적
-    if (iat_ms > 0.0) {
-        st->sample_count++;
-
-        // Welford 알고리즘을 이용한 온라인 평균/분산 업데이트
-        double delta  = iat_ms - st->mean_ms;
-        st->mean_ms  += delta / st->sample_count;
-        double delta2 = iat_ms - st->mean_ms;
-        st->M2_ms    += delta * delta2;
-
-        if (st->sample_count >= IAT_MIN_SAMPLES) {
-            // 분산 및 표준편차 계산
-            double variance = st->M2_ms / (st->sample_count - 1);
-            double std_ms   = sqrt(variance);
-
-            // CV(변동계수) = 표준편차 / 평균
-            // -> CV가 매우 작으면 (0.5% 이하) 메트로놈처럼 일정한 리듬으로 write하는 패턴
-            double CV = std_ms / (st->mean_ms > 0.0 ? st->mean_ms : 1.0);
-
-			log_line("WRITE", path, "IAT-DEBUG",
-         "IAT-current-stats",
-         "samples=%d last_iat=%.2f mean_ms=%.2f std_ms=%.2f CV=%.4f threshold_CV=%.4f",
-         st->sample_count, iat_ms, st->mean_ms, std_ms, CV, IAT_LOW_JITTER_CV);
-
-
-            if (CV <= IAT_LOW_JITTER_CV) {
-                // 이 PID는 "기계적인 루프"로 판단 -> 이후부터 영구 차단
-                st->flagged = 1;
-
-                double mean_ms = st->mean_ms;
-                int    samples = st->sample_count;
-
-                pthread_mutex_unlock(&g_iat_lock);
-
-                // 탐지 로그 (FLAG)
-                log_line("WRITE", path, "FLAG",
-                         "IAT-low-jitter-write-pattern-detected",
-                         "samples=%d mean_ms=%.2f std_ms=%.2f CV=%.4f threshold_CV=%.4f",
-                         samples, mean_ms, std_ms, CV, IAT_LOW_JITTER_CV);
-
-                // 차단 로그 (BLOCKED)
-                log_line("WRITE", path, "BLOCKED",
-                         "IAT-low-jitter-write-pattern-blocking",
-                         "samples=%d mean_ms=%.2f CV=%.4f",
-                         samples, mean_ms, CV);
-
-                return 1;
-            }
-        }
-    }
-
-    // 아직 차단 조건에 도달하지 않음 -> 잠금 해제 후 통과
-    pthread_mutex_unlock(&g_iat_lock);
-    return 0;
-}
-
 
 // WRITE 레이트 리밋 함수
 // 3초에 3회 이상 write 시도 시 차단
@@ -1054,19 +1010,22 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
     int fd = (int)fi->fh;
 
+	// 1. [Novelty] I/O 리듬 분석 (IAT Variance Analysis)
+    // 기계적인 쓰기 패턴(극도로 낮은 분산) 탐지
+    // 내용(Content)이 아닌 행위의 시간차(Timing)를 봅니다.
+    int rhythm_status = check_io_rhythm_anomaly(fc->pid);
+    if (rhythm_status == 2) {
+        log_line("BLOCK", path, "BOT_DETECTED", "Machine-like I/O rhythm detected (Low IAT Variance)", "pid=%d", fc->pid);
+        return -EPERM;
+    } else if (rhythm_status == 1) {
+        return -EPERM; // 이미 차단됨
+    }
+	
     // WRITE 레이트 리밋 : 5초에 3회 이상 시도 시 차단
     if (write_rate_limit_exceeded()) {
 	log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "window=%ds max=%d", WRITE_WINDOW_SEC, MAX_WRITES_IN_WINDOW);
 	return -EPERM;
     }
-
-	// I/O 리듬(IAT) 분석 기반 PID 차단
-	// 같은 PID가 메트로놈처럼 일정한 간격으로 write를 반복하면
-	// I/O 리듬 분산이 매우 작아져서 랜섬웨어 루프 가능성이 높다고 판단
-	if (iat_on_write_and_check_block(path)) {
-		// 함수 내부에서 로그 남김
-		return -EPERM;
-	}
 
     // 상태 조회 및 차단 대기시간 확인
     // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
