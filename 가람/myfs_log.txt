@@ -1,0 +1,1121 @@
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=-1 pid=-1 action=START path="/"
+reason="boot"
+extra="mountpoint="/home/user32230324/workspace/target""
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=4319 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:09+0900] [ALLOW]
+uid=1001 pid=38443 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=1001 pid=38512 action=READDIR path="/"
+reason="policy:basic"
+
+[2025-11-29T10:58:13+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_61.mp4"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78842.640713"
+
+[2025-11-29T10:58:13+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=-1.000000 prev_count=0 new_count=0 prev_mean=0.000000 prev_m2=0.000000 now_sec=78842.640713 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:13+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_61.mp4"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=0 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_61.mp4"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/448_test_61.mp4""
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_61.mp4"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_61.mp4"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/448_test_61.mp4" relpath="test_61.mp4""
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_61.mp4"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:13+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_61.mp4"
+reason="policy:basic"
+
+[2025-11-29T10:58:16+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_85.c"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78845.667054"
+
+[2025-11-29T10:58:16+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.026340 prev_count=0 new_count=1 prev_mean=0.000000 prev_m2=0.000000 now_sec=78845.667054 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:16+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_85.c"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=1 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:16+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_85.c"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/449_test_85.c""
+
+[2025-11-29T10:58:16+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_85.c"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:16+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_85.c"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/449_test_85.c" relpath="test_85.c""
+
+[2025-11-29T10:58:16+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_85.c"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:16+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_85.c"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78845.676378"
+
+[2025-11-29T10:58:16+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=0.009325 prev_count=1 new_count=2 prev_mean=3.026340 prev_m2=0.000000 now_sec=78845.676378 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:16+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_85.c"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=2 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:16+0900] [BLOCKED]
+uid=1001 pid=38512 action=WRITE path="/test_85.c"
+reason="file-temporarily-or-restored-locked"
+extra="blocked_until=1764385096 now=1764381496"
+
+[2025-11-29T10:58:16+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_85.c"
+reason="policy:basic"
+
+[2025-11-29T10:58:19+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_19.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78848.688700"
+
+[2025-11-29T10:58:19+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.012321 prev_count=2 new_count=3 prev_mean=1.517833 prev_m2=4.551192 now_sec=78848.688700 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:19+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_19.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=3 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:19+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_19.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/450_test_19.jpg""
+
+[2025-11-29T10:58:19+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_19.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:19+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_19.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/450_test_19.jpg" relpath="test_19.jpg""
+
+[2025-11-29T10:58:19+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_19.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:19+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_19.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:22+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_67.sqlite"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78851.693340"
+
+[2025-11-29T10:58:22+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.004640 prev_count=3 new_count=4 prev_mean=2.015995 prev_m2=6.040189 now_sec=78851.693340 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:22+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_67.sqlite"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=4 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:22+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_67.sqlite"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/451_test_67.sqlite""
+
+[2025-11-29T10:58:22+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_67.sqlite"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:22+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_67.sqlite"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/451_test_67.sqlite" relpath="test_67.sqlite""
+
+[2025-11-29T10:58:22+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_67.sqlite"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:22+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_67.sqlite"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78851.705784"
+
+[2025-11-29T10:58:22+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=0.012445 prev_count=4 new_count=5 prev_mean=2.263157 prev_m2=6.773253 now_sec=78851.705784 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:22+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_67.sqlite"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=5 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:22+0900] [BLOCKED]
+uid=1001 pid=38512 action=WRITE path="/test_67.sqlite"
+reason="file-temporarily-or-restored-locked"
+extra="blocked_until=1764385102 now=1764381502"
+
+[2025-11-29T10:58:22+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_67.sqlite"
+reason="policy:basic"
+
+[2025-11-29T10:58:25+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_41.mp3"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78854.750050"
+
+[2025-11-29T10:58:25+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.044266 prev_count=5 new_count=6 prev_mean=1.813014 prev_m2=10.825817 now_sec=78854.750050 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:25+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_41.mp3"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=6 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:25+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_41.mp3"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/452_test_41.mp3""
+
+[2025-11-29T10:58:25+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_41.mp3"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:25+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_41.mp3"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/452_test_41.mp3" relpath="test_41.mp3""
+
+[2025-11-29T10:58:25+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_41.mp3"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:25+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_41.mp3"
+reason="policy:basic"
+
+[2025-11-29T10:58:28+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_30.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78857.767702"
+
+[2025-11-29T10:58:28+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.017651 prev_count=6 new_count=7 prev_mean=2.018223 prev_m2=12.089134 now_sec=78857.767702 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:28+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_30.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=7 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:28+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_30.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/453_test_30.jpg""
+
+[2025-11-29T10:58:28+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_30.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:28+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_30.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/453_test_30.jpg" relpath="test_30.jpg""
+
+[2025-11-29T10:58:28+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_30.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:28+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_30.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:31+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_21.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78860.789899"
+
+[2025-11-29T10:58:31+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.022198 prev_count=7 new_count=8 prev_mean=2.160998 prev_m2=12.945298 now_sec=78860.789899 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:31+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_21.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=8 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:31+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_21.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/454_test_21.jpg""
+
+[2025-11-29T10:58:31+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_21.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:31+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_21.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/454_test_21.jpg" relpath="test_21.jpg""
+
+[2025-11-29T10:58:31+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_21.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:31+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_21.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:32+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_17.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:32+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_16.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:34+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_82.svg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78863.821931"
+
+[2025-11-29T10:58:34+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.032032 prev_count=8 new_count=9 prev_mean=2.268648 prev_m2=13.594254 now_sec=78863.821931 stddev=0.000000 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:34+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_82.svg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=9 stddev=0.000000 thresh=0.050000"
+
+[2025-11-29T10:58:34+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_82.svg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/455_test_82.svg""
+
+[2025-11-29T10:58:34+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_82.svg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:34+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_82.svg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/455_test_82.svg" relpath="test_82.svg""
+
+[2025-11-29T10:58:34+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_82.svg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:34+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_82.svg"
+reason="policy:basic"
+
+[2025-11-29T10:58:37+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_52.cpp"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78866.830076"
+
+[2025-11-29T10:58:37+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.008145 prev_count=9 new_count=10 prev_mean=2.353469 prev_m2=14.112258 now_sec=78866.830076 stddev=1.269208 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:37+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_52.cpp"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=10 stddev=1.269208 thresh=0.050000"
+
+[2025-11-29T10:58:37+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_52.cpp"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/456_test_52.cpp""
+
+[2025-11-29T10:58:37+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_52.cpp"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:37+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_52.cpp"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/456_test_52.cpp" relpath="test_52.cpp""
+
+[2025-11-29T10:58:37+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_52.cpp"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:37+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_52.cpp"
+reason="policy:basic"
+
+[2025-11-29T10:58:40+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_40.mp3"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78869.848231"
+
+[2025-11-29T10:58:40+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.018155 prev_count=10 new_count=11 prev_mean=2.418936 prev_m2=14.497999 now_sec=78869.848231 stddev=1.217556 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:40+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_40.mp3"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=11 stddev=1.217556 thresh=0.050000"
+
+[2025-11-29T10:58:40+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_40.mp3"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/457_test_40.mp3""
+
+[2025-11-29T10:58:40+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_40.mp3"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:40+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_40.mp3"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/457_test_40.mp3" relpath="test_40.mp3""
+
+[2025-11-29T10:58:40+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_40.mp3"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:40+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_40.mp3"
+reason="policy:basic"
+
+[2025-11-29T10:58:45+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_53.db"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78874.898012"
+
+[2025-11-29T10:58:45+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=5.049781 prev_count=11 new_count=12 prev_mean=2.473411 prev_m2=14.824420 now_sec=78874.898012 stddev=1.378700 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:45+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_53.db"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=12 stddev=1.378700 thresh=0.050000"
+
+[2025-11-29T10:58:45+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_53.db"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/458_test_53.db""
+
+[2025-11-29T10:58:45+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_53.db"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:45+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_53.db"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/458_test_53.db" relpath="test_53.db""
+
+[2025-11-29T10:58:45+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_53.db"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:45+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_53.db"
+reason="policy:basic"
+
+[2025-11-29T10:58:48+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_18.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78878.092590"
+
+[2025-11-29T10:58:48+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.194578 prev_count=12 new_count=13 prev_mean=2.688108 prev_m2=20.908964 now_sec=78878.092590 stddev=1.327458 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:48+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_18.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=13 stddev=1.327458 thresh=0.050000"
+
+[2025-11-29T10:58:48+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_18.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/459_test_18.jpg""
+
+[2025-11-29T10:58:48+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_18.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:48+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_18.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/459_test_18.jpg" relpath="test_18.jpg""
+
+[2025-11-29T10:58:48+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_18.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:48+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_18.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78878.105065"
+
+[2025-11-29T10:58:48+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=0.012475 prev_count=13 new_count=14 prev_mean=2.727067 prev_m2=21.145744 now_sec=78878.105065 stddev=1.467295 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:48+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_18.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=14 stddev=1.467295 thresh=0.050000"
+
+[2025-11-29T10:58:48+0900] [BLOCKED]
+uid=1001 pid=38512 action=WRITE path="/test_18.jpg"
+reason="file-temporarily-or-restored-locked"
+extra="blocked_until=1764385128 now=1764381528"
+
+[2025-11-29T10:58:48+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_18.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:58:51+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_6.hwp"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78881.112240"
+
+[2025-11-29T10:58:51+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.007175 prev_count=14 new_count=15 prev_mean=2.533168 prev_m2=27.988396 now_sec=78881.112240 stddev=1.419208 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:51+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_6.hwp"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=15 stddev=1.419208 thresh=0.050000"
+
+[2025-11-29T10:58:51+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_6.hwp"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/460_test_6.hwp""
+
+[2025-11-29T10:58:51+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_6.hwp"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:51+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_6.hwp"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/460_test_6.hwp" relpath="test_6.hwp""
+
+[2025-11-29T10:58:51+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_6.hwp"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:51+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_6.hwp"
+reason="policy:basic"
+
+[2025-11-29T10:58:54+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_11.doc"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78884.121190"
+
+[2025-11-29T10:58:54+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.008950 prev_count=15 new_count=16 prev_mean=2.564768 prev_m2=28.198099 now_sec=78884.121190 stddev=1.375574 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:54+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_11.doc"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=16 stddev=1.375574 thresh=0.050000"
+
+[2025-11-29T10:58:54+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_11.doc"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/461_test_11.doc""
+
+[2025-11-29T10:58:54+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_11.doc"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:54+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_11.doc"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/461_test_11.doc" relpath="test_11.doc""
+
+[2025-11-29T10:58:54+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_11.doc"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:54+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_11.doc"
+reason="policy:basic"
+
+[2025-11-29T10:58:57+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_84.c"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78887.277915"
+
+[2025-11-29T10:58:57+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.156725 prev_count=16 new_count=17 prev_mean=2.592530 prev_m2=28.383065 now_sec=78887.277915 stddev=1.338905 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:58:57+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_84.c"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=17 stddev=1.338905 thresh=0.050000"
+
+[2025-11-29T10:58:57+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_84.c"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/462_test_84.c""
+
+[2025-11-29T10:58:57+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_84.c"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:58:57+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_84.c"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/462_test_84.c" relpath="test_84.c""
+
+[2025-11-29T10:58:57+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_84.c"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:58:57+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_84.c"
+reason="policy:basic"
+
+[2025-11-29T10:59:00+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_75.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78890.286700"
+
+[2025-11-29T10:59:00+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.008785 prev_count=17 new_count=18 prev_mean=2.625718 prev_m2=28.682657 now_sec=78890.286700 stddev=1.302063 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:00+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_75.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=18 stddev=1.302063 thresh=0.050000"
+
+[2025-11-29T10:59:00+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_75.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/463_test_75.jpg""
+
+[2025-11-29T10:59:00+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_75.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:00+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_75.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/463_test_75.jpg" relpath="test_75.jpg""
+
+[2025-11-29T10:59:00+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_75.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:00+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_75.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:59:04+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_29.jpg"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78893.944612"
+
+[2025-11-29T10:59:04+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.657912 prev_count=18 new_count=19 prev_mean=2.646999 prev_m2=28.821246 now_sec=78893.944612 stddev=1.286455 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:04+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_29.jpg"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=19 stddev=1.286455 thresh=0.050000"
+
+[2025-11-29T10:59:04+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_29.jpg"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/464_test_29.jpg""
+
+[2025-11-29T10:59:04+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_29.jpg"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:04+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_29.jpg"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/464_test_29.jpg" relpath="test_29.jpg""
+
+[2025-11-29T10:59:04+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_29.jpg"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:04+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_29.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:59:09+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_47.html"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78898.512108"
+
+[2025-11-29T10:59:09+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=4.567496 prev_count=19 new_count=20 prev_mean=2.700205 prev_m2=29.789404 now_sec=78898.512108 stddev=1.319925 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:09+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_47.html"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=20 stddev=1.319925 thresh=0.050000"
+
+[2025-11-29T10:59:09+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_47.html"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/465_test_47.html""
+
+[2025-11-29T10:59:09+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_47.html"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:09+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_47.html"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/465_test_47.html" relpath="test_47.html""
+
+[2025-11-29T10:59:09+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_47.html"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:09+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_47.html"
+reason="policy:basic"
+
+[2025-11-29T10:59:12+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_81.html"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78901.702192"
+
+[2025-11-29T10:59:12+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.190084 prev_count=20 new_count=21 prev_mean=2.793570 prev_m2=33.101840 now_sec=78901.702192 stddev=1.289410 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:12+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_81.html"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=21 stddev=1.289410 thresh=0.050000"
+
+[2025-11-29T10:59:12+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_81.html"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/466_test_81.html""
+
+[2025-11-29T10:59:12+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_81.html"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:12+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_81.html"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/466_test_81.html" relpath="test_81.html""
+
+[2025-11-29T10:59:12+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_81.html"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:12+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_81.html"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78901.708466"
+
+[2025-11-29T10:59:12+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=0.006274 prev_count=21 new_count=22 prev_mean=2.812451 prev_m2=33.251577 now_sec=78901.708466 stddev=1.393322 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:12+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_81.html"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=22 stddev=1.393322 thresh=0.050000"
+
+[2025-11-29T10:59:12+0900] [BLOCKED]
+uid=1001 pid=38512 action=WRITE path="/test_81.html"
+reason="file-temporarily-or-restored-locked"
+extra="blocked_until=1764385152 now=1764381552"
+
+[2025-11-29T10:59:12+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_81.html"
+reason="policy:basic"
+
+[2025-11-29T10:59:15+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_48.pptx"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78904.713017"
+
+[2025-11-29T10:59:15+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.004551 prev_count=22 new_count=23 prev_mean=2.684898 prev_m2=40.768269 now_sec=78904.713017 stddev=1.362918 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:15+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_48.pptx"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=23 stddev=1.362918 thresh=0.050000"
+
+[2025-11-29T10:59:15+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_48.pptx"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/467_test_48.pptx""
+
+[2025-11-29T10:59:15+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_48.pptx"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:15+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_48.pptx"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/467_test_48.pptx" relpath="test_48.pptx""
+
+[2025-11-29T10:59:15+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_48.pptx"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:15+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_48.pptx"
+reason="policy:basic"
+
+[2025-11-29T10:59:18+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_88.hwp"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78907.730263"
+
+[2025-11-29T10:59:18+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.017246 prev_count=23 new_count=24 prev_mean=2.698796 prev_m2=40.866005 now_sec=78907.730263 stddev=1.334544 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:18+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_88.hwp"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=24 stddev=1.334544 thresh=0.050000"
+
+[2025-11-29T10:59:18+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_88.hwp"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/468_test_88.hwp""
+
+[2025-11-29T10:59:18+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_88.hwp"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:18+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_88.hwp"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/468_test_88.hwp" relpath="test_88.hwp""
+
+[2025-11-29T10:59:18+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_88.hwp"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:18+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_88.hwp"
+reason="policy:basic"
+
+[2025-11-29T10:59:21+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_98.pptx"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78910.741020"
+
+[2025-11-29T10:59:21+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.010757 prev_count=24 new_count=25 prev_mean=2.712065 prev_m2=40.963190 now_sec=78910.741020 stddev=1.307810 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:21+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_98.pptx"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=25 stddev=1.307810 thresh=0.050000"
+
+[2025-11-29T10:59:21+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_98.pptx"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/469_test_98.pptx""
+
+[2025-11-29T10:59:21+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_98.pptx"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:21+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_98.pptx"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/469_test_98.pptx" relpath="test_98.pptx""
+
+[2025-11-29T10:59:21+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_98.pptx"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:21+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_98.pptx"
+reason="policy:basic"
+
+[2025-11-29T10:59:24+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_20.mp3"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78913.746196"
+
+[2025-11-29T10:59:24+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.005176 prev_count=25 new_count=26 prev_mean=2.724012 prev_m2=41.048838 now_sec=78913.746196 stddev=1.282573 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:24+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_20.mp3"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=26 stddev=1.282573 thresh=0.050000"
+
+[2025-11-29T10:59:24+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_20.mp3"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/470_test_20.mp3""
+
+[2025-11-29T10:59:24+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_20.mp3"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:24+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_20.mp3"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/470_test_20.mp3" relpath="test_20.mp3""
+
+[2025-11-29T10:59:24+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_20.mp3"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:24+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_20.mp3"
+reason="policy:basic"
+
+[2025-11-29T10:59:27+0900] [ENTER]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_9.doc"
+reason="before-iat-update"
+extra="pid=38512 pgid=38512 now_sec=78916.761404"
+
+[2025-11-29T10:59:27+0900] [RUN]
+uid=1001 pid=38512 action=IAT_DEBUG path="-"
+reason="update"
+extra="actor=38512 iat=3.015208 prev_count=26 new_count=27 prev_mean=2.734826 prev_m2=41.124851 now_sec=78916.761404 stddev=1.258824 thresh=0.050000 min_samples=10 flagged_before=0 flagged_after=0"
+
+[2025-11-29T10:59:27+0900] [PASS]
+uid=1001 pid=38512 action=WRITE_IAT path="/test_9.doc"
+reason="after-iat-update"
+extra="pid=38512 pgid=38512 samples=27 stddev=1.258824 thresh=0.050000"
+
+[2025-11-29T10:59:27+0900] [ALLOW]
+uid=1001 pid=38512 action=SNAPSHOT path="/test_9.doc"
+reason="backup-ok"
+extra="dst="/home/user32230324/.snapshots/471_test_9.doc""
+
+[2025-11-29T10:59:27+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_9.doc"
+reason="write-ok"
+extra="count=1"
+
+[2025-11-29T10:59:27+0900] [ALLOW]
+uid=1001 pid=38512 action=RESTORE path="/test_9.doc"
+reason="restore-ok"
+extra="snapshot="/home/user32230324/.snapshots/471_test_9.doc" relpath="test_9.doc""
+
+[2025-11-29T10:59:27+0900] [ALLOW]
+uid=1001 pid=38512 action=WRITE path="/test_9.doc"
+reason="auto-restore-after-snapshot"
+
+[2025-11-29T10:59:27+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_9.doc"
+reason="policy:basic"
+
+[2025-11-29T10:59:32+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_17.jpg"
+reason="policy:basic"
+
+[2025-11-29T10:59:32+0900] [ALLOW]
+uid=0 pid=0 action=RELEASE path="/test_16.jpg"
+reason="policy:basic"
