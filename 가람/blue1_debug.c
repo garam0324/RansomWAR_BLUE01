@@ -51,12 +51,12 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define BACKUP_DIR_NAME ".snapshots"
 #define BACKUP_COUNTER_FILE "backup_count.dat" // 백업 카운터 파일명
 
-#define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
+#define MAX_WRITES_PER_FILE        100      // 파일당 최대 쓰기 횟수
 #define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
 #define HIGH_ENTROPY_HARD_BLOCK    10.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC    10     // hard_block이면 10 동안 쓰기 금지
 #define WRITE_WINDOW_SEC           5      // 쓰기 빈도 감지 창 (초)
-#define MAX_WRITES_IN_WINDOW       1000     // 창 내 최대 쓰기 횟수
+#define MAX_WRITES_IN_WINDOW       3     // 창 내 최대 쓰기 횟수
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
@@ -81,14 +81,16 @@ static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태
 
 // I/O 리듬 분석 (IAT 기반)
 // 한 PID에 대해 IAT(연속 write 간 시간차) 샘플을 얼마나 모은 뒤부터 판단할지
-#define IAT_MIN_SAMPLES          10      // 10번 이상 write 간격이 쌓이면 그때부터 판단
+#define IAT_MIN_SAMPLES          10       // 10번 이상 write 간격이 쌓이면 그때부터 판단
 
 // "Low Jitter"로 볼 표준편차 임계값 (초 단위)
-// 0.05초 = 50ms
-#define IAT_LOW_JITTER_STDDEV    0.050
+#define IAT_LOW_JITTER_STDDEV    1.5    // 1.5초
+
+// 느린 공격까지 잡기 위한 상대적 지터 기준 (표준편차 / 평균)
+#define IAT_REL_JITTER_THRESHOLD 0.50
 
 // 너무 오래전에 한 write와의 간격은 다른 작업으로 취급하고 리셋할 최대 간격
-#define IAT_RESET_GAP_SEC        30.0     // 30초 넘으면 이전 패턴은 끊긴 걸로 보고 새로 시작
+#define IAT_RESET_GAP_SEC        180.0     // 180초 넘으면 이전 패턴은 끊긴 걸로 보고 새로 시작
 
 typedef struct {
     pid_t  actor_id;        // 행위 주체 ID (pgid)
@@ -443,7 +445,7 @@ static IATStats *get_iat_stats_for_actor(pid_t actor_id) {
 // Low Jitter이면 1 리턴, 아니면 0 리턴
 // out_stddev, out_count에 현재 값 반환
 static int iat_update_and_check(pid_t actor_id, double now_sec,
-                                double *out_stddev, int *out_count)
+                                double *out_stddev, int *out_count, double *out_mean)
 {
     IATStats *st = get_iat_stats_for_actor(actor_id);
 
@@ -461,6 +463,7 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
 
     double iat            = -1.0;
     double stddev         = 0.0;
+    double mean           = 0.0;
     int    count          = 0;
 
     pthread_mutex_lock(&g_iat_lock);
@@ -479,6 +482,7 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
             stddev = sqrt(var);
         }
         count = st->count;
+	mean = st->mean;
 #if IAT_DEBUG
         log_line("IAT_DEBUG", "-", "FLAGGED",
                  "already-flagged",
@@ -489,6 +493,7 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
         pthread_mutex_unlock(&g_iat_lock);
         if (out_stddev) *out_stddev = stddev;
         if (out_count)  *out_count  = count;
+	if (out_mean)   *out_mean   = mean;
         return 1;
     }
 
@@ -515,14 +520,17 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
     // 마지막 타임스탬프 갱신
     st->last_ts = now_sec;
 
-    // 표본 충분 → 분산 / 표준편차 계산 + Low Jitter 판단
+    // 표본 충분하면 Low Jitter 판단
     if (st->count >= IAT_MIN_SAMPLES && st->m2 > 0.0) {
         double var = st->m2 / (st->count - 1);
         if (var < 0.0) var = 0.0;
         stddev = sqrt(var);
         count  = st->count;
 
-        if (stddev < IAT_LOW_JITTER_STDDEV) {
+	double mean_iat = st->mean;
+	double rel_jitter = (mean_iat > 0.0) ? (stddev / mean_iat) : 1e9;
+
+        if (stddev < IAT_LOW_JITTER_STDDEV || (mean_iat > 0.5 && rel_jitter < IAT_REL_JITTER_THRESHOLD)) {
             st->flagged = 1;
         }
     } else {
@@ -546,8 +554,10 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
              flagged_before, st->flagged);
 #endif
 
+    // out 파라이터 채우기
     if (out_stddev) *out_stddev = stddev;
     if (out_count)  *out_count  = st->count;
+    if (out_mean)   *out_mean   = st->mean;
 
     int flagged_now = st->flagged;
     pthread_mutex_unlock(&g_iat_lock);
@@ -1226,6 +1236,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
     double now_sec    = now_seconds_monotonic();
     double iat_stddev = 0.0;
+    double iat_mean = 0.0;
     int    iat_samples = 0;
 
 #if IAT_DEBUG
@@ -1235,7 +1246,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
              (int)cur_pid, (int)cur_pgid, now_sec);
 #endif
 
-    int iat_blocked = iat_update_and_check(cur_pgid, now_sec, &iat_stddev, &iat_samples);
+    int iat_blocked = iat_update_and_check(cur_pgid, now_sec, &iat_stddev, &iat_samples, &iat_mean);
 
 #if IAT_DEBUG
     log_line("WRITE_IAT", path, iat_blocked ? "WILL_BLOCK" : "PASS",
@@ -1249,8 +1260,8 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     if (iat_blocked) {
         log_line("WRITE", path, "BLOCKED",
                  "IAT-low-jitter",
-                 "pid=%d pgid=%d stddev=%.6f samples=%d",
-                 (int)cur_pid, (int)cur_pgid, iat_stddev, iat_samples);
+                 "pid=%d pgid=%d mean=%.6f stddev=%.6f samples=%d",
+                 (int)cur_pid, (int)cur_pgid, iat_mean, iat_stddev, iat_samples);
         return -EPERM;
     }
 
