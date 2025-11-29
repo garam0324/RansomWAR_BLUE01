@@ -51,9 +51,9 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define BACKUP_DIR_NAME ".snapshots"
 #define BACKUP_COUNTER_FILE "backup_count.dat" // 백업 카운터 파일명
 
-#define MAX_WRITES_PER_FILE        100      // 파일당 최대 쓰기 횟수
+#define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
 #define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
-#define HIGH_ENTROPY_HARD_BLOCK    10.0    // 이 이상이면 바로 차단
+#define HIGH_ENTROPY_HARD_BLOCK    7.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC    10     // hard_block이면 10 동안 쓰기 금지
 #define WRITE_WINDOW_SEC           5      // 쓰기 빈도 감지 창 (초)
 #define MAX_WRITES_IN_WINDOW       3     // 창 내 최대 쓰기 횟수
@@ -84,16 +84,19 @@ static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태
 #define IAT_MIN_SAMPLES          10       // 10번 이상 write 간격이 쌓이면 그때부터 판단
 
 // "Low Jitter"로 볼 표준편차 임계값 (초 단위)
-#define IAT_LOW_JITTER_STDDEV    1.5    // 1.5초
+#define IAT_LOW_JITTER_STDDEV    1.0    // 1.0초
 
-// 느린 공격까지 잡기 위한 상대적 지터 기준 (표준편차 / 평균)
+// 느린 공격까지 잡기 위한 상대적 지터 기준
+// CV = srddev / mean
+// 평균에 비해 변동이 적으면 차단
 #define IAT_REL_JITTER_THRESHOLD 0.50
 
 // 너무 오래전에 한 write와의 간격은 다른 작업으로 취급하고 리셋할 최대 간격
 #define IAT_RESET_GAP_SEC        180.0     // 180초 넘으면 이전 패턴은 끊긴 걸로 보고 새로 시작
 
+// 한 actor(pgid)에 대한 IAT 상태
 typedef struct {
-    pid_t  actor_id;        // 행위 주체 ID (pgid)
+    pid_t  actor_id;   // 행위 주체 ID (pgid)
     double last_ts;    // 마지막 write 시간 (초 단위, CLOCK_MONOTONIC 기준)
     double mean;       // IAT 평균
     double m2;         // 분산 계산을 위한 누적 값(Welford 알고리즘)
@@ -101,7 +104,7 @@ typedef struct {
     int    flagged;    // Low Jitter로 이미 플래그된 PID면 1
 } IATStats;
 
-static IATStats g_iat_stats[1024];
+static IATStats g_iat_stats[1024]; // 여러 actor(pgid)들을 동시에 추적하기 위한 테이블
 static pthread_mutex_t g_iat_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
@@ -406,31 +409,39 @@ static ReadStats* get_read_stats_for_current_pid(void) {
 }
 
 // 현재 시간 (초 단위) 반환 – IAT 계산용
+// time()은 시스템 시간이 바뀌면 역행하거나 튀는 문제가 있음
+// 따라서 부팅 이후 증가만 하는 CLOCK_MONOTONIC 사용
 static double now_seconds_monotonic(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
-// PID에 해당하는 IATStats 슬롯 찾기/초기화
+// pgid를 기반으로 IATStats 슬롯 찾기/초기화
+// 이미 추적 중이면 기존 엔트리 리턴
+// 비어 있는 슬롯이 있으면 초기화해서 바로 할당
+// 실패하면 NULL
 static IATStats *get_iat_stats_for_actor(pid_t actor_id) {
     if (actor_id <= 0) return NULL;
 
     pthread_mutex_lock(&g_iat_lock);
 
-    IATStats *slot = NULL;
-    IATStats *empty = NULL;
+    IATStats *slot = NULL; // 실제로 사용할 엔트리
+    IATStats *empty = NULL; // 아직 사용 안 된 첫 빈 슬롯
 
     for (int i = 0; i < (int)(sizeof(g_iat_stats)/sizeof(g_iat_stats[0])); i++) {
         if (g_iat_stats[i].actor_id == actor_id) {
+			// 이미 이 actor_id에 대한 기록이 있다면 그대로 사용
             slot = &g_iat_stats[i];
             break;
         }
         if (g_iat_stats[i].actor_id == 0 && !empty) {
+			// 아직 이 actor를 위한 엔트리가 없고 비어 있는 슬롯을 발견한 경우
             empty = &g_iat_stats[i];
         }
     }
 
+	// 기존 슬롯이 없고 비어 있는 슬롯이 있다면 새로 초기화해서 사용
     if (!slot && empty) {
         memset(empty, 0, sizeof(*empty));
         empty->actor_id = actor_id;
@@ -441,15 +452,24 @@ static IATStats *get_iat_stats_for_actor(pid_t actor_id) {
     return slot;
 }
 
-// I/O 리듬 분석: actor_id(pgid)에 대해 IAT 업데이트 + Low Jitter 판단
-// Low Jitter이면 1 리턴, 아니면 0 리턴
-// out_stddev, out_count에 현재 값 반환
+// I/O 리듬 분석: 기존 rate limit 기능 우회 방지 위함
+// 사람이라면 접근 시간이 일정하지 않고, 랜섬웨어라면 접근 시간이 일정할 것이라는 생각에 기반
+// pid가 아닌 pgid 사용하는 이유 : fork로 여러 pid에서 공격을 시도하는 것 방지
+
+// actor_id(pgid)에 대해 현재 시간(now_sec)을 입력으로 받아
+// 1) 직전 write 와의 간격 IAT를 갱신하고
+// 2) IAT 평균/분산을 업데이트 한 뒤
+// 3) Low Jitter 조건을 만족하면 st->flagged 세팅
+// 리턴 값 : 1(차단), 0(정상)
+// out_stddev : 현재까지 계산된 IAT 표준편차
+// out_count : 사용된 IAT 샘플 개수
+// out_mean : IAT 평균
 static int iat_update_and_check(pid_t actor_id, double now_sec,
                                 double *out_stddev, int *out_count, double *out_mean)
 {
-    IATStats *st = get_iat_stats_for_actor(actor_id);
+    IATStats *st = get_iat_stats_for_actor(actor_id); // actor에 해당하는 IATStats 엔트리 확보
 
-    // 슬롯 자체를 못 만들었을 때
+    // 슬롯 자체를 못 만들었을 때 -> 분석을 포기하고 차단 X
     if (!st) {
 #if IAT_DEBUG
         log_line("IAT_DEBUG", "-", "MISS",
@@ -461,22 +481,23 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
         return 0;
     }
 
-    double iat            = -1.0;
-    double stddev         = 0.0;
-    double mean           = 0.0;
-    int    count          = 0;
+    double iat            = -1.0; // 이번에 계산된 IAT (직전 write와의 간격)
+    double stddev         = 0.0; // 계산된 표준편차
+    double mean           = 0.0; // 계산된 평균(IAT 평균)
+    int    count          = 0; // 샘플 개수
 
     pthread_mutex_lock(&g_iat_lock);
 
+	// 디버그용 : 이전 상태 보관
     double prev_last      = st->last_ts;
     double prev_mean      = st->mean;
     double prev_m2        = st->m2;
     int    prev_count     = st->count;
     int    flagged_before = st->flagged;
 
-    // 이미 플래그된 상태면, 값만 계산해서 바로 리턴
+    // 이미 actor가 과거에 Low Jitter로 판정되어 플래그된 상태면, 값만 계산해서 바로 리턴
     if (st->flagged) {
-        if (st->count > 1 && st->m2 > 0.0) {
+        if (st->count > 1 && st->m2 > 0.0) { // count>1인 경우 분산/표준편차 계산
             double var = st->m2 / (st->count - 1);
             if (var < 0.0) var = 0.0;
             stddev = sqrt(var);
@@ -497,18 +518,27 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
         return 1;
     }
 
-    // last_ts가 있으면 IAT 계산
+	// IAT 계산 및 통계 갱신
+    // last_ts가 있으면(최소 한 번 이상 write가 있었으면) IAT 계산
     if (st->last_ts > 0.0) {
-        iat = now_sec - st->last_ts;
-        if (iat < 0.0) iat = 0.0;
+        iat = now_sec - st->last_ts; // 이번 write - 직전 write 시각
+        if (iat < 0.0) iat = 0.0; // 음수가 나오는 경우 0으로 보정
 
-        // 너무 큰 간격이면 패턴 리셋
+        // 너무 큰 간격이면 통계 초기화
         if (iat > IAT_RESET_GAP_SEC) {
             st->mean  = 0.0;
             st->m2    = 0.0;
             st->count = 0;
-        } else if (iat > 0.0) {
+        } else if (iat > 0.0) { // 0보다 큰 정상적인 IAT만 통계에 반영
             // Welford 알고리즘
+			// 데이터 스트림에서 표본분산(또는 표준편차)을 효율적으로 계산하는 온라인(한 번의 순회만으로) 알고리즘
+			
+			// 새로운 값 x가 들어올 때
+			// count += 1
+			// delta = x - mean
+			// mean += delta / count
+			// m2 += delta * (x - mean)
+			// 라는 형태로 online 분산 계산 가능
             st->count++;
             double delta  = iat - st->mean;
             st->mean     += delta / st->count;
@@ -517,24 +547,28 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
         }
     }
 
-    // 마지막 타임스탬프 갱신
+    // 이번 write 시각을 last_ts로 기록
     st->last_ts = now_sec;
 
     // 표본 충분하면 Low Jitter 판단
     if (st->count >= IAT_MIN_SAMPLES && st->m2 > 0.0) {
+		// 표준분산 : m2 / (n-1)
         double var = st->m2 / (st->count - 1);
         if (var < 0.0) var = 0.0;
         stddev = sqrt(var);
         count  = st->count;
 
 	double mean_iat = st->mean;
+	// 상대적 지터 : 표준편차 / 평균 (평균 대비 변동 폭이 어느 정도인지)
 	double rel_jitter = (mean_iat > 0.0) ? (stddev / mean_iat) : 1e9;
 
+		// 절대 표준편차가 너무 작아도 의심
+		// 평균 간격이 어느 정도(0.5초 이상)인데도 상대적 지터 작으면 느린 공격으로 의심
         if (stddev < IAT_LOW_JITTER_STDDEV || (mean_iat > 0.5 && rel_jitter < IAT_REL_JITTER_THRESHOLD)) {
-            st->flagged = 1;
+            st->flagged = 1; // 이 actor를 low jitter 패턴으로 확정
         }
     } else {
-        // 표본 부족
+        // 표본 부족하면 0으로 처리
         stddev = 0.0;
         count  = st->count;
     }
@@ -561,7 +595,7 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
 
     int flagged_now = st->flagged;
     pthread_mutex_unlock(&g_iat_lock);
-    return flagged_now;
+    return flagged_now; // 1이면 low jitter로 차단, 0이면 X
 }
 
 
@@ -1221,13 +1255,15 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     int fd = (int)fi->fh;
 
     // I/O 리듬 분석 (IAT 기반)
+	// 단일 프로세스가 아닌 프로세스 그룹(pgid) 단위로 판단
+	// fork 방지 위함
     struct fuse_context *fc = fuse_get_context();
-    pid_t cur_pid  = fc ? fc->pid : -1;
-    pid_t cur_pgid = -1;
+    pid_t cur_pid  = fc ? fc->pid : -1; // 현재 FUSE 요청을 보낸 실제 PID
+    pid_t cur_pgid = -1; // 이 PId가 속한 프로세스 그룹 ID
 
     // 같은 프로세스 그룹을 하나의 "행위 주체"로 취급
     if (cur_pid > 0) {
-        cur_pgid = getpgid(cur_pid);
+        cur_pgid = getpgid(cur_pid); // 같은 pgid = 같은 행위 주체
         if (cur_pgid < 0) {
             // getpgid 실패하면 그냥 PID 자체를 fallback으로 사용
             cur_pgid = cur_pid;
@@ -1240,15 +1276,17 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     int    iat_samples = 0;
 
 #if IAT_DEBUG
+    // IAT 업데이트 전, 현재 write 호출이 어떻게 들어왔는지 로그 남김
     log_line("WRITE_IAT", path, "ENTER",
              "before-iat-update",
              "pid=%d pgid=%d now_sec=%.6f",
              (int)cur_pid, (int)cur_pgid, now_sec);
 #endif
-
+	// 현재 pgid에 대해 IAT 통계 갱신 + low jitter 여부 판단
     int iat_blocked = iat_update_and_check(cur_pgid, now_sec, &iat_stddev, &iat_samples, &iat_mean);
 
 #if IAT_DEBUG
+	// IAT 업데이트 후의 결과를 요약해서 기록
     log_line("WRITE_IAT", path, iat_blocked ? "WILL_BLOCK" : "PASS",
              "after-iat-update",
              "pid=%d pgid=%d samples=%d stddev=%.6f thresh=%.6f",
@@ -1256,7 +1294,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
              iat_samples, iat_stddev,
              (double)IAT_LOW_JITTER_STDDEV);
 #endif
-
+	// IAT 모듈에서 low jitter 공격으로 판단한 경우 write 차단
     if (iat_blocked) {
         log_line("WRITE", path, "BLOCKED",
                  "IAT-low-jitter",
