@@ -87,7 +87,7 @@ static pthread_mutex_t g_read_lock = PTHREAD_MUTEX_INITIALIZER; // 읽기 상태
 #define IAT_LOW_JITTER_STDDEV    1.0    // 1.0초
 
 // 느린 공격까지 잡기 위한 상대적 지터 기준
-// CV = srddev / mean
+// CV = stddev / mean
 // 평균에 비해 변동이 적으면 차단
 #define IAT_REL_JITTER_THRESHOLD 0.50
 
