@@ -519,6 +519,7 @@ static int iat_update_and_check(pid_t actor_id, double now_sec,
     }
 
 	// IAT 계산 및 통계 갱신
+	// IAT = 연손된 write 사이의 시간 간격 -> write 호출들이 얼마나 규칙적으로 들어오는지 판단
     // last_ts가 있으면(최소 한 번 이상 write가 있었으면) IAT 계산
     if (st->last_ts > 0.0) {
         iat = now_sec - st->last_ts; // 이번 write - 직전 write 시각
