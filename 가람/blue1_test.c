@@ -49,10 +49,10 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 
 #define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
 #define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
-#define HIGH_ENTROPY_HARD_BLOCK    7.0    // 이 이상이면 바로 차단
+#define HIGH_ENTROPY_HARD_BLOCK    10.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC    10     // hard_block이면 10 동안 쓰기 금지
 #define WRITE_WINDOW_SEC           5      // 쓰기 빈도 감지 창 (초)
-#define MAX_WRITES_IN_WINDOW       3     // 창 내 최대 쓰기 횟수
+#define MAX_WRITES_IN_WINDOW       1000     // 창 내 최대 쓰기 횟수
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
@@ -416,18 +416,18 @@ static IATStats *get_iat_stats_for_actor(pid_t actor_id) {
     IATStats *empty = NULL;
 
     for (int i = 0; i < (int)(sizeof(g_iat_stats)/sizeof(g_iat_stats[0])); i++) {
-        if (g_iat_stats[i].pid == pid) {
+        if (g_iat_stats[i].actor_id == actor_id) {
             slot = &g_iat_stats[i];
             break;
         }
-        if (g_iat_stats[i].pid == 0 && !empty) {
+        if (g_iat_stats[i].actor_id == 0 && !empty) {
             empty = &g_iat_stats[i];
         }
     }
 
     if (!slot && empty) {
         memset(empty, 0, sizeof(*empty));
-        empty->pid = pid;
+        empty->actor_id = actor_id;
         slot = empty;
     }
 
@@ -438,7 +438,7 @@ static IATStats *get_iat_stats_for_actor(pid_t actor_id) {
 // I/O 리듬 분석: 현재 PID에 대해 IAT를 업데이트하고
 // Low Jitter면 1을, 아니면 0을 리턴.
 // out_stddev, out_count로 현재 기준값을 돌려줌
-static int iat_update_and_check(pid_t pid, double now_sec,
+static int iat_update_and_check(pid_t actor_id, double now_sec,
                                 double *out_stddev, int *out_count) {
     IATStats *st = get_iat_stats_for_actor(actor_id);
     if (!st) return 0; // 슬롯 못 만들면 그냥 IAT 검사 스킵
