@@ -37,6 +37,7 @@ RansomWAR_BLUE01 (RansomShield)
 
 - 프로젝트 발표 담당
 
+
 3. 김준범
 
 - 기능 구현 코드 작성 및 보완 (로그, 유틸리티 등)
@@ -54,12 +55,12 @@ RansomWAR_BLUE01 (RansomShield)
 
 	    엔트로피 7.0 초과 시: 'BLOCKED' 처리 및 쓰기 차단 (암호화 시도로 간주).
 
-	    차단 후 10초간 해당 파일에 대한 쓰기 접근(Cooldown) 강제 적용.
+	    차단 후 10초간 해당 파일에 대한 쓰기 접근(Cooldown) 차단 적용.
 
 
-2. 스냅샷(Snapshot)을 통한 데이터 복구
+2. 스냅샷(Snapshot)을 통한 데이터 백업 및 복구
 
-- 원리: 파일이 변조되기 직전(First Write), 원본을 백업 디렉터리로 자동 복사.
+- 원리: 파일이 변조되기 직전(First Write), 원본을 백업 디렉터리로 자동 복사, 변조 완료 후에는 백업 디렉터리를 통해 원본 복구 (복구 파일에는 일정 시간 쓰기 접근 차단(Cooldown) 적용).
 
 - 위치: $HOME/.snapshots/ 경로에 [ID]_[변환된경로] 형태로 저장.
 
@@ -83,6 +84,14 @@ RansomWAR_BLUE01 (RansomShield)
 
 - 대량 이름 변경 방지: 1초 내 반복 Rename 또는 파일당 5회 이상 Rename 시 차단.
 
+- 대량 쓰기 방지 : 5초 내 3회 이상 전역 write 또는 파일당 5회 이상 write 시 차단.
+
+5. I/O 리듬 분석
+- 원리 : 정상적인 접근(사람)이라면 입력 속도가 불규칙(평균, 표준편차 변화 큼).
+
+- IAT(연속 write 호출 간 시간차) 측정하여 평균, 표준편차, 상대적 Jitter(표준편차 / 평균) 계산 후 차단 여부 판단.
+
+- 효과 : rate limit 우회 방지
 
 [4] 실행 매뉴얼 (User Manual)
 
@@ -114,6 +123,7 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
 
 
