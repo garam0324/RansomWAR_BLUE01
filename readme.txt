@@ -86,6 +86,7 @@ RansomWAR_BLUE01 (RansomShield)
 
 - 대량 쓰기 방지 : 5초 내 3회 이상 전역 write 또는 파일당 5회 이상 write 시 차단.
 
+
 5. I/O 리듬 분석
 - 원리 : 정상적인 접근(사람)이라면 입력 속도가 불규칙(평균, 표준편차 변화 큼).
 
@@ -123,6 +124,7 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
 
 
