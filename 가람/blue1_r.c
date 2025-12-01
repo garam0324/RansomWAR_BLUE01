@@ -144,6 +144,29 @@ static file_state_t file_states[MAX_TRACKED_FILES]; // 여러 파일의 상태 �
 static int file_state_count = 0;                    // 현재 사용 중인 file_state 개수
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER; // file_state 보호용 뮤텍
 
+// 프로세스 pid 기반으로 편집기인지 확인
+static int is_editor_process(pid_t pid) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+
+    char buf[32] = {0};
+    read(fd, buf, sizeof(buf)-1);
+    close(fd);
+
+    // 편집기 이름 매칭
+    if (strstr(buf, "vim") ||
+        strstr(buf, "nvim") ||
+        strstr(buf, "gedit") ||
+        strstr(buf, "code") ||
+        strstr(buf, "nano"))
+        return 1;
+
+    return 0;
+}
+
 // 확장자 화이트리스트 & 랜섬노트 패턴
 // 보호해야 할 민감/중요 데이터 확장자 목록 (전부 소문자)
 static const char *SENSITIVE_EXTS[] = {
@@ -1505,7 +1528,7 @@ if (!is_temp) {
         struct stat st_after;
         if (fstat(fd, &st_after) == 0) {
 			// 초기 크기 대비 너무 즐어들면 경고
-            if (!is_temp && state->initial_size > 0 &&
+            if (!is_temp && !is_editor_process(pid) && state->initial_size > 0 &&
                 (double)st_after.st_size < (double)state->initial_size * FILE_SIZE_CHANGE_THRESHOLD) {
                 log_line("WRITE", path, "BLOCKED", "file-size-drop",
                          "from=%ld to=%ld", (long)state->initial_size, (long)st_after.st_size);
