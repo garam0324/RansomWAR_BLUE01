@@ -1355,12 +1355,13 @@ if (!is_temp) {
     }
 }
 
-
+if (!is_temp) {
     // WRITE 레이트 리밋 : 5초에 3회 이상 시도 시 차단
     if (write_rate_limit_exceeded()) {
 	log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "window=%ds max=%d", WRITE_WINDOW_SEC, MAX_WRITES_IN_WINDOW);
 	return -EPERM;
     }
+}
 
     // 상태 조회 및 차단 대기시간 확인
     // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
