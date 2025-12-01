@@ -64,7 +64,8 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 
 // 스냅샷 복구 on/off
 static int g_snapshot_restore_enabled = 0;
-#define SNAPSHOT_CTRL_FILE ".snapshot_contorl"
+static char g_snapshot_ctrl_path[PATH_MAX] = {0}; // 제어 파일 경로
+#define SNAPSHOT_CTRL_FILE ".snapshot_control"
 
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
@@ -1794,14 +1795,18 @@ int main(int argc, char *argv[]) {
     if (home) snprintf(log_path, sizeof(log_path), "%s/myfs_log.txt", home);
     else      snprintf(log_path, sizeof(log_path), "/tmp/myfs_log.txt");
 
+	// 제어 파일 경로
+	if (home) snprintf(g_snapshot_ctrl_path, sizeof(g_snapshot_ctrl_path), "%s/workspace/%s", home, SNAPSHOT_CTRL_FILE);
+	else      snprintf(g_snapshot_ctrl_path, sizeof(g_snapshot_ctrl_path), "/tmp/%s", SNAPSHOT_CTRL_FILE);
+	g_snapshot_ctrl_path[PATH_MAX - 1] = '\0';
+
     // 로그 파일 append 모드로 열기
     log_fp = fopen(log_path, "a");
     if (!log_fp) perror("fopen log");
 
     // 스냅샷 컨트롤 파일 생성 (기본 값 : off)
     int ctrl_fd = openat(
-        base_fd,
-        SNAPSHOT_CTRL_FILE,
+        g_snapshot_ctrl_path,
         O_RDWR | O_CREAT | O_TRUNC,
         0600
     );
