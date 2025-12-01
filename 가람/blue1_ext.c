@@ -1572,6 +1572,8 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
 
+	int is_temp_to = is_editor_temp_name(relto);
+
 	// 절대경로를 상대경로로 변환
     get_relative_path(from, relfrom);
     get_relative_path(to, relto);
