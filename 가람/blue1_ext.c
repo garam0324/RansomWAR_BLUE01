@@ -1683,7 +1683,7 @@ static int myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi
     if (fi && fi->fh) {
         res = ftruncate((int)fi->fh, size);
     } else {
-        res = truncateat(base_fd, rel, size);
+        res = truncate(rel, size);
     }
     if (res == -1) return -errno;
 
