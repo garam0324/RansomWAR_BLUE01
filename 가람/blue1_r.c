@@ -957,6 +957,28 @@ static int create_snapshot(const char *path, const char *relpath) {
     return 0;
 }
 
+// ~/workspace/.snapshot_control 읽어서 g_snapshot_restore_enabled 갱신
+static void refresh_snapshot_flag(void) {
+    if (g_snapshot_ctrl_path[0] == '\0')
+        return;
+
+    int fd = open(g_snapshot_ctrl_path, O_RDONLY);
+    if (fd == -1) {
+        // 못 열면 기본 OFF
+        g_snapshot_restore_enabled = 0;
+        return;
+    }
+
+    char ch = 0;
+    ssize_t n = read(fd, &ch, 1);
+    close(fd);
+
+    if (n == 1 && ch == '1')
+        g_snapshot_restore_enabled = 1;
+    else
+        g_snapshot_restore_enabled = 0;
+}
+
 // 최신 스냅샷으로 복구
 // fuse_path: FUSE 상의 경로 (예: "/foo/bar.txt")
 // 0 이상이면 성공, 음수면 -errno 스타일 에러 리턴
@@ -1179,16 +1201,6 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
 
-	// Snapshot control file bypass
-		if (strcmp(rel, SNAPSHOT_CTRL_FILE) == 0) {
-    	int fd = openat(base_fd, rel, fi->flags | O_CREAT, 0600);
-    	if (fd == -1) return -errno;
-    	fi->fh = fd;
-    	log_line("CONTROL", path, "ALLOW", "open-snapshot-control-file", NULL);
-    	return 0;
-	}
-
-
     struct stat st;
     int exists = (fstatat(base_fd, rel, &st, AT_SYMLINK_NOFOLLOW) == 0); // 해당 경로가 실제 존재하는지 확인
 
@@ -1320,18 +1332,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     char relpath[PATH_MAX];
     get_relative_path(path, relpath);
 
-  if (strcmp(relpath, SNAPSHOT_CTRL_FILE) == 0) {
-    if (size > 0) {
-      if (buf[0] == '1') {
-        g_snapshot_restore_enabled = 1;
-        log_line("CONTROL", path, "ALLOW", "SNAPSHOT_RESTORE=ON", NULL);
-      } else if (buf[0] == '0') {
-        g_snapshot_restore_enabled = 0;
-        log_line("CONTROL", path, "ALLOW", "SNAPSHOT_RESTORE=OFF", NULL);
-      }
-    }
-    return (int)size;
-  }
+	refresh_snapshot_flag();
 
     int fd = (int)fi->fh;
 
@@ -1617,18 +1618,11 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
 
-	if (strcmp(relfrom, SNAPSHOT_CTRL_FILE) == 0 ||
-    	strcmp(relto, SNAPSHOT_CTRL_FILE) == 0) {
-    	log_line("CONTROL", to, "BLOCK", "snapshot-control-file-no-rename", NULL);
-    	return -EPERM;
-	}
-
-
-	int is_temp_to = is_editor_temp_name(relto);
-
 	// 절대경로를 상대경로로 변환
     get_relative_path(from, relfrom);
     get_relative_path(to, relto);
+
+	int is_temp_to = is_editor_temp_name(relto);
 
 	// FUSE rename은 flags가 없어야 함 -> 있으면 비정상 요청으로 간주
     if (flags) return -EINVAL;
@@ -1728,12 +1722,6 @@ static int myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi
     char rel[PATH_MAX];
     get_relative_path(path, rel);
 
-	if (strcmp(rel, SNAPSHOT_CTRL_FILE) == 0) {
-    	log_line("CONTROL", path, "BLOCK", "snapshot-control-file-no-delete", NULL);
-    	return -EPERM;
-	}
-
-
     int res;
     if (fi && fi->fh) {
         res = ftruncate((int)fi->fh, size);
@@ -1805,18 +1793,25 @@ int main(int argc, char *argv[]) {
     if (!log_fp) perror("fopen log");
 
     // 스냅샷 컨트롤 파일 생성 (기본 값 : off)
-    int ctrl_fd = openat(
+    int ctrl_fd = open(
         g_snapshot_ctrl_path,
         O_RDWR | O_CREAT | O_TRUNC,
         0600
     );
     if (ctrl_fd != -1) {
-        write(ctrl_fd, "0", 1); // 초기 상태 off
+        if (write(ctrl_fd, "0", 1) != 1) {
+            log_line("CONTROL", g_snapshot_ctrl_path, "FAIL",
+                     "write-initial-zero-failed", "errno=%d", errno);
+        } else {
+            log_line("CONTROL", g_snapshot_ctrl_path, "INIT",
+                     "snapshot_restore_default_OFF", NULL);
+        }
         close(ctrl_fd);
-        log_line("CONTROL", SNAPSHOT_CTRL_FILE, "INIT", "snapshot_restore_dafault_OFF", NULL);
     } else {
-        log_line("CONTROL", SNAPSHOT_CTRL_FILE, "FAIL", "cannot-create-control-file", "errno=%d", errno);
+        log_line("CONTROL", g_snapshot_ctrl_path, "FAIL",
+                 "cannot-create-control-file", "errno=%d", errno);
     }
+
 
     // 시작 로그
     log_line("START", "/", "ALLOW", "boot", "mountpoint=\"%s\"", mountpoint);
