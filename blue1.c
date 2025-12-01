@@ -62,6 +62,11 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
 #define RESTORE_LOCK_SEC           (60*60) // 스냅샷 복구 후 이 시간 동안 쓰기 차단 (1시간)
 
+// 스냅샷 복구 on/off
+static int g_snapshot_restore_enabled = 1; // default 값은 1
+static char g_snapshot_ctrl_path[PATH_MAX] = {0}; // 제어 파일 경로
+#define SNAPSHOT_CTRL_FILE ".snapshot_control"
+
 // WRITE 레이트 리밋용
 static time_t write_timestamps[1024];     // 최근 write 시도 시간들
 static int write_ts_count = 0;
@@ -139,6 +144,37 @@ static file_state_t file_states[MAX_TRACKED_FILES]; // 여러 파일의 상태 �
 static int file_state_count = 0;                    // 현재 사용 중인 file_state 개수
 static pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER; // file_state 보호용 뮤텍
 
+// 프로세스 pid 기반으로 편집기인지 확인
+static int is_editor_process(pid_t pid) {
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+
+    char buf[32] = {0};
+    read(fd, buf, sizeof(buf)-1);
+    close(fd);
+
+    // 편집기 이름 매칭
+    if (strstr(buf, "vim") ||
+        strstr(buf, "nvim") ||
+        strstr(buf, "gedit") ||
+        strstr(buf, "code") ||
+        strstr(buf, "nano") ||
+	strstr(buf, "geany")||
+	strstr(buf, "gnome-text-editor")||
+	strstr(buf, "emacs")||
+	strstr(buf, "vi")||
+	strstr(buf, "code-oss")||
+	strstr(buf, "kate")||
+	strstr(buf, "mousepad")||
+	strstr(buf, "leafpad"))
+        return 1;
+
+    return 0;
+}
+
 // 확장자 화이트리스트 & 랜섬노트 패턴
 // 보호해야 할 민감/중요 데이터 확장자 목록 (전부 소문자)
 static const char *SENSITIVE_EXTS[] = {
@@ -182,6 +218,40 @@ static void to_lower_str(const char *src, char *dst, size_t dst_sz) {
     }
     dst[i] = '\0';
 }
+
+// 편집기(vim, gedit 등)가 만드는 임시/백업 파일인지 확인
+// 예외적으로 화이트리스트/매직 검사에서 허용하기 위함
+static int is_editor_temp_name(const char *path) {
+    // basename만 떼어내기
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+
+    if (base[0] == '\0')
+        return 0;
+
+    // gedit / glib 가 만드는 임시 파일: .goutputstream-XXXX
+    if (strncmp(base, ".goutputstream-", 15) == 0) {
+        return 1;
+    }
+
+    // vim 백업 파일: xxx~, xxx.cp~ 같은 것들
+    size_t len = strlen(base);
+    if (len > 0 && base[len - 1] == '~') {
+        return 1;
+    }
+
+    // vim 스왑 파일: .xxx.swp, .xxx.swo 등 (있으면 편하게 허용)
+    if (len >= 4) {
+        if (strcmp(base + len - 4, ".swp") == 0 ||
+            strcmp(base + len - 4, ".swo") == 0 ||
+            strcmp(base + len - 4, ".swx") == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 
 // 파일명에서 마지막 . 뒤 확장자 추출하여 소문자로 변환하는 함수
 // name : 파일명
@@ -292,6 +362,12 @@ static int is_sensitive_ext(const char *ext) {
 
 // path에 확장자 존재 + 화이트리스트 안에 있는지 확인하는 함수
 static int is_whitelisted_and_has_ext(const char *path) {
+
+    // 편집기 임시/백업 파일은 확장자 체크 예외
+    if (is_editor_temp_name(path)) {
+        return 1; // 임시 파일은 화이트리스트 강제 적용 X
+    }
+  
     char ext[32];
     get_lower_ext(path, ext, sizeof(ext));
 
@@ -912,6 +988,28 @@ static int create_snapshot(const char *path, const char *relpath) {
     return 0;
 }
 
+// ~/workspace/.snapshot_control 읽어서 g_snapshot_restore_enabled 갱신
+static void refresh_snapshot_flag(void) {
+    if (g_snapshot_ctrl_path[0] == '\0')
+        return;
+
+    int fd = open(g_snapshot_ctrl_path, O_RDONLY);
+    if (fd == -1) {
+        // 못 열면 기본 OFF
+        g_snapshot_restore_enabled = 0;
+        return;
+    }
+
+    char ch = 0;
+    ssize_t n = read(fd, &ch, 1);
+    close(fd);
+
+    if (n == 1 && ch == '1')
+        g_snapshot_restore_enabled = 1;
+    else
+        g_snapshot_restore_enabled = 0;
+}
+
 // 최신 스냅샷으로 복구
 // fuse_path: FUSE 상의 경로 (예: "/foo/bar.txt")
 // 0 이상이면 성공, 음수면 -errno 스타일 에러 리턴
@@ -1045,6 +1143,11 @@ static int restore_latest_snapshot(const char *fuse_path) {
 // open 시 의심 파일 판단
 // 화이트리스트 확장자인데 매직 넘버가 안 맞거나 화이트리스트 확장자가 아니면 차단
 static int is_suspicious_for_open(const char *relpath) {
+    // 편집기 임시/ 백업 파일은 open 시 위장 검사에서 제외
+    if (is_editor_temp_name(relpath)) {
+        return 0;
+    }
+  
     char ext[32]; 
     get_lower_ext(relpath, ext, sizeof(ext));
 
@@ -1162,8 +1265,13 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
     char rel[PATH_MAX];
     get_relative_path(path, rel); // 절대경로 -> FUSE 상대경로로 변환
 
+  // 편집기 임시/백업 파일이면 확장자/랜섬노트 검사 스킵
+  struct fuse_context *fc = fuse_get_context();
+  pid_t pid = (fc ? fc->pid : -1);
+  int is_editor = is_editor_temp_name(rel) || is_editor_process(pid);
+
 	// 화이트리스트에 없는 확장자 파일 생성 차단
-    if (!is_whitelisted_and_has_ext(rel)) { // 화이트리스트에 없는 확장자일 경우
+    if (!is_editor && !is_whitelisted_and_has_ext(rel)) { // 화이트리스트에 없는 확장자일 경우
         log_line("CREATE", rel, "BLOCKED", "File extension not in whitelist policy (e.g., no extension)", NULL); // 로그 기록
         return -EPERM; // 권한 없음 반환
     }
@@ -1194,19 +1302,23 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 static int myfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     (void)path;
 
+	// 편집기 임시/백업 파일 여부
+	int is_temp = is_editor_temp_name(path);
+
     // 현재 PID에 대한 ReadStats 가져옴
-    ReadStats *rs = get_read_stats_for_current_pid();
+    ReadStats *rs = NULL;
     pid_t cur_pid = -1;
 
-    if (rs) {
-        cur_pid = rs->pid;
-    }
+	if (!is_temp) {
+			rs = get_read_stats_for_current_pid();
+        	if (rs) cur_pid = rs->pid;
 
-	// 이미 차단 상태인 PID면 바로 거부
-    if(rs && rs->blocked){
-        log_line("READ", path, "BLOCKED", "rate-limit-read", "pid=%d", (int)rs->pid);
-        return -EPERM;
-    }
+		// 이미 차단 상태인 PID면 바로 거부
+    	if(rs && rs->blocked){
+        	log_line("READ", path, "BLOCKED", "rate-limit-read", "pid=%d", (int)rs->pid);
+        	return -EPERM;
+    	}
+	}
 
     int fd = (int)fi->fh;
     // 실제 read
@@ -1217,7 +1329,7 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
     }
 
 	// 읽기량 누적 / 임계 초과 검사
-    if (rs && res > 0) {
+    if (!is_temp && rs && res > 0) {
         int just_blocked = 0;
         pthread_mutex_lock(&g_read_lock);
         time_t now = time(NULL);
@@ -1253,12 +1365,20 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     char relpath[PATH_MAX];
     get_relative_path(path, relpath);
 
+    // 요청을 보낸 프로세스 PID 가져오기
+    struct fuse_context *fc = fuse_get_context();
+    pid_t pid = (fc ? fc->pid : -1);
+    int is_editor = is_editor_temp_name(relpath) || is_editor_process(pid);
+
+    refresh_snapshot_flag();
+
     int fd = (int)fi->fh;
+
+	int is_temp = is_editor_temp_name(relpath);
 
     // I/O 리듬 분석 (IAT 기반)
 	// 단일 프로세스가 아닌 프로세스 그룹(pgid) 단위로 판단
 	// fork 방지 위함
-    struct fuse_context *fc = fuse_get_context();
     pid_t cur_pid  = fc ? fc->pid : -1; // 현재 FUSE 요청을 보낸 실제 PID
     pid_t cur_pgid = -1; // 이 PId가 속한 프로세스 그룹 ID
 
@@ -1275,7 +1395,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     double iat_stddev = 0.0;
     double iat_mean = 0.0;
     int    iat_samples = 0;
-
+if (!is_editor) {
 #if IAT_DEBUG
     // IAT 업데이트 전, 현재 write 호출이 어떻게 들어왔는지 로그 남김
     log_line("WRITE_IAT", path, "ENTER",
@@ -1303,14 +1423,15 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
                  (int)cur_pid, (int)cur_pgid, iat_mean, iat_stddev, iat_samples);
         return -EPERM;
     }
+}
 
-
-
+if (!is_editor) {
     // WRITE 레이트 리밋 : 5초에 3회 이상 시도 시 차단
     if (write_rate_limit_exceeded()) {
 	log_line("WRITE", path, "BLOCKED", "write-frequency-limit-exceeded", "window=%ds max=%d", WRITE_WINDOW_SEC, MAX_WRITES_IN_WINDOW);
 	return -EPERM;
     }
+}
 
     // 상태 조회 및 차단 대기시간 확인
     // 의심되어 차단한 파일에 대해, 공격이 지속되는 것을 막기 위함
@@ -1358,7 +1479,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 	// 행위 기반 탐지 (엔트로피/빈도/스냅샷)
     if (state) {
         // 최대 쓰기 횟수 제한 -> 무한 루프에 빠진 프로세스나 공격의 의도를 가진 덮어쓰기 행위를 시도하는 것을 방지
-        if (state->write_count >= MAX_WRITES_PER_FILE) {
+        if (!is_editor && state->write_count >= MAX_WRITES_PER_FILE) {
             log_line("WRITE", path, "BLOCKED", "max-write-count-exceeded", "count=%d", state->write_count);
             return -EPERM;
         }
@@ -1421,7 +1542,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
         struct stat st_after;
         if (fstat(fd, &st_after) == 0) {
 			// 초기 크기 대비 너무 즐어들면 경고
-            if (state->initial_size > 0 &&
+            if (!is_editor && state->initial_size > 0 &&
                 (double)st_after.st_size < (double)state->initial_size * FILE_SIZE_CHANGE_THRESHOLD) {
                 log_line("WRITE", path, "BLOCKED", "file-size-drop",
                          "from=%ld to=%ld", (long)state->initial_size, (long)st_after.st_size);
@@ -1438,7 +1559,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     }
     
     // 스냅샷 복구
-    if (snapshot_taken) {
+    if (g_snapshot_restore_enabled && snapshot_taken) {
         int r = restore_latest_snapshot(path);
         if (r == 0) {
             log_line("WRITE", path, "ALLOW", "auto-restore-after-snapshot", NULL);
@@ -1452,8 +1573,8 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
             // 복구 실패 시에도 로그 남김
             log_line("WRITE", path, "FAIL", "auto-restore-failed", "ret=%d", r);
             }
-	}
-    }
+	    }
+  }
     return (int)res;
 }
 
@@ -1468,11 +1589,26 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
 
 // unlink : 삭제 레이트 리밋
 static int myfs_unlink(const char *path) {
+	char rel[PATH_MAX];
+        get_relative_path(path, rel);
+
+	struct fuse_context *fc = fuse_get_context();
+	pid_t pid = (fc ? fc->pid : -1);
+
+	int is_editor = is_editor_temp_name(rel) || is_editor_process(pid);
+
+	// 편집기 임시/백업 파일이면 unlink rate limit에서 제외
+	if (is_editor) {
+		if (unlinkat(base_fd, rel, 0) == -1) {
+			log_line("UNLINK", path, "DENY", "os-error-editor-temp", "errno=%d", errno);
+			return -errno;
+		}
+		log_line("UNLINK", path, "ALLOW", "editor-temp-unlink", NULL);
+		return 0;
+	}
+	
     int count_in_window = 0;
     int exceeded = unlink_rate_limit_exceeded(&count_in_window); // 대량 삭제 탐지
-
-    char rel[PATH_MAX];
-    get_relative_path(path, rel);
 
     if (exceeded) {
 		// 윈도우 내 삭제 횟수 초과 -> 차단
@@ -1528,6 +1664,8 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     get_relative_path(from, relfrom);
     get_relative_path(to, relto);
 
+	int is_temp_to = is_editor_temp_name(relto);
+
 	// FUSE rename은 flags가 없어야 함 -> 있으면 비정상 요청으로 간주
     if (flags) return -EINVAL;
 
@@ -1563,14 +1701,14 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     }
 
 	// 새 파일명(relto)이 화이트리스트 확장자에 없는 경우 차단
-    if (!is_whitelisted_and_has_ext(relto)) {
+    if (!is_temp_to && !is_whitelisted_and_has_ext(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "New file extension not in whitelist policy", NULL);
         return -EPERM;
     }
 
 	// 새 파일명이 랜섬노트 패턴에 해당하면 차단
-    if (is_ransom_note(relto)) {
+    if (!is_temp_to && is_ransom_note(relto)) {
         pthread_mutex_unlock(&rename_lock);
         log_line("RENAME", relto, "BLOCKED", "Ransom note name pattern detected", NULL);
         return -EPERM;
@@ -1583,17 +1721,19 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char ext[32]; // 파일 확장자를 담을 버퍼
     get_lower_ext(relto, ext, sizeof(ext)); // 새 파일 이름에서 확장자 추출
 
-	// 원본 파일의 실제 내용 확인 (일반 파일 일 때만 검사)
-    if (fstatat(base_fd, relfrom, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(st.st_mode)) {
-        n_read = read_file_magic_at_base(relfrom, h, sizeof(h));
+  if (!is_temp_to) {
+	  // 원본 파일의 실제 내용 확인 (일반 파일 일 때만 검사)
+      if (fstatat(base_fd, relfrom, &st, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(st.st_mode)) {
+          n_read = read_file_magic_at_base(relfrom, h, sizeof(h));
 
-        if (n_read > 0) {
-			// 매직넘버와 확장자 불일치 시 차단
-            if (!magic_ok_for_ext(ext, h, n_read)) { // 확장자와 매직넘버의 일치 여부 판단
-                pthread_mutex_unlock(&rename_lock);
-                log_line("RENAME", relto, "BLOCKED", "Deep Magic number mismatch (16-byte signature failed for new extension)", NULL);
-                return -EPERM;
-            }
+          if (n_read > 0) {
+			  // 매직넘버와 확장자 불일치 시 차단
+              if (!magic_ok_for_ext(ext, h, n_read)) { // 확장자와 매직넘버의 일치 여부 판단
+                  pthread_mutex_unlock(&rename_lock);
+                  log_line("RENAME", relto, "BLOCKED", "Deep Magic number mismatch (16-byte signature failed for new extension)", NULL);
+                  return -EPERM;
+              }
+          }
         }
     }
 
@@ -1618,6 +1758,24 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     log_line("RENAME", relto, "ALLOW", "Rename successful (per file count updated)", "old_path=%s", relfrom);
     return 0;
 }
+
+// truncate
+static int myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
+    char rel[PATH_MAX];
+    get_relative_path(path, rel);
+
+    int res;
+    if (fi && fi->fh) {
+        res = ftruncate((int)fi->fh, size);
+    } else {
+        res = truncate(rel, size);
+    }
+    if (res == -1) return -errno;
+
+    log_line("TRUNCATE", path, "ALLOW", "policy:truncate-basic", "newsize=%ld", (long)size);
+    return 0;
+}
+
 
 // utimens
 static int myfs_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) {
@@ -1667,9 +1825,35 @@ int main(int argc, char *argv[]) {
     if (home) snprintf(log_path, sizeof(log_path), "%s/myfs_log.txt", home);
     else      snprintf(log_path, sizeof(log_path), "/tmp/myfs_log.txt");
 
+	// 제어 파일 경로
+	if (home) snprintf(g_snapshot_ctrl_path, sizeof(g_snapshot_ctrl_path), "%s/workspace/%s", home, SNAPSHOT_CTRL_FILE);
+	else      snprintf(g_snapshot_ctrl_path, sizeof(g_snapshot_ctrl_path), "/tmp/%s", SNAPSHOT_CTRL_FILE);
+	g_snapshot_ctrl_path[PATH_MAX - 1] = '\0';
+
     // 로그 파일 append 모드로 열기
     log_fp = fopen(log_path, "a");
     if (!log_fp) perror("fopen log");
+
+    // 스냅샷 컨트롤 파일 생성 (기본 값 : off)
+    int ctrl_fd = open(
+        g_snapshot_ctrl_path,
+        O_RDWR | O_CREAT | O_TRUNC,
+        0600
+    );
+    if (ctrl_fd != -1) {
+        if (write(ctrl_fd, "1", 1) != 1) { // 초기 상태 : on
+            log_line("CONTROL", g_snapshot_ctrl_path, "FAIL",
+                     "write-initial-zero-failed", "errno=%d", errno);
+        } else {
+            log_line("CONTROL", g_snapshot_ctrl_path, "INIT",
+                     "snapshot_restore_default_OFF", NULL);
+        }
+        close(ctrl_fd);
+    } else {
+        log_line("CONTROL", g_snapshot_ctrl_path, "FAIL",
+                 "cannot-create-control-file", "errno=%d", errno);
+    }
+
 
     // 시작 로그
     log_line("START", "/", "ALLOW", "boot", "mountpoint=\"%s\"", mountpoint);
@@ -1696,6 +1880,7 @@ int main(int argc, char *argv[]) {
         .rmdir   = myfs_rmdir,
         .rename  = myfs_rename,
         .utimens = myfs_utimens,
+		.truncate = myfs_truncate,
     };
 	
     // FUSE 메인 루프 진입
