@@ -1303,6 +1303,8 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 
     int fd = (int)fi->fh;
 
+	int is_temp = is_editor_temp_name(relpath);
+
     // I/O 리듬 분석 (IAT 기반)
 	// 단일 프로세스가 아닌 프로세스 그룹(pgid) 단위로 판단
 	// fork 방지 위함
@@ -1323,7 +1325,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     double iat_stddev = 0.0;
     double iat_mean = 0.0;
     int    iat_samples = 0;
-
+if (!is_temp) {
 #if IAT_DEBUG
     // IAT 업데이트 전, 현재 write 호출이 어떻게 들어왔는지 로그 남김
     log_line("WRITE_IAT", path, "ENTER",
@@ -1351,7 +1353,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
                  (int)cur_pid, (int)cur_pgid, iat_mean, iat_stddev, iat_samples);
         return -EPERM;
     }
-
+}
 
 
     // WRITE 레이트 리밋 : 5초에 3회 이상 시도 시 차단
@@ -1406,7 +1408,7 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
 	// 행위 기반 탐지 (엔트로피/빈도/스냅샷)
     if (state) {
         // 최대 쓰기 횟수 제한 -> 무한 루프에 빠진 프로세스나 공격의 의도를 가진 덮어쓰기 행위를 시도하는 것을 방지
-        if (state->write_count >= MAX_WRITES_PER_FILE) {
+        if (!is_temp && state->write_count >= MAX_WRITES_PER_FILE) {
             log_line("WRITE", path, "BLOCKED", "max-write-count-exceeded", "count=%d", state->write_count);
             return -EPERM;
         }
