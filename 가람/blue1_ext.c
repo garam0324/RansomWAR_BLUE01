@@ -1674,6 +1674,24 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     return 0;
 }
 
+// truncate
+static int myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
+    char rel[PATH_MAX];
+    get_relative_path(path, rel);
+
+    int res;
+    if (fi && fi->fh) {
+        res = ftruncate((int)fi->fh, size);
+    } else {
+        res = truncateat(base_fd, rel, size);
+    }
+    if (res == -1) return -errno;
+
+    log_line("TRUNCATE", path, "ALLOW", "policy:truncate-basic", "newsize=%ld", (long)size);
+    return 0;
+}
+
+
 // utimens
 static int myfs_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi) {
     int res;
@@ -1751,6 +1769,7 @@ int main(int argc, char *argv[]) {
         .rmdir   = myfs_rmdir,
         .rename  = myfs_rename,
         .utimens = myfs_utimens,
+		.truncate = myfs_truncate,
     };
 	
     // FUSE 메인 루프 진입
