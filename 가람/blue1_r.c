@@ -53,10 +53,10 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 
 #define MAX_WRITES_PER_FILE        5      // 파일당 최대 쓰기 횟수
 #define HIGH_ENTROPY_THRESHOLD     6.5    // 엔트로피 경고 임계값
-#define HIGH_ENTROPY_HARD_BLOCK    7.0    // 이 이상이면 바로 차단
+#define HIGH_ENTROPY_HARD_BLOCK    10.0    // 이 이상이면 바로 차단
 #define FILE_BLOCK_COOLDOWN_SEC    10     // hard_block이면 10 동안 쓰기 금지
 #define WRITE_WINDOW_SEC           5      // 쓰기 빈도 감지 창 (초)
-#define MAX_WRITES_IN_WINDOW       3     // 창 내 최대 쓰기 횟수
+#define MAX_WRITES_IN_WINDOW       100     // 창 내 최대 쓰기 횟수
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
@@ -1319,10 +1319,10 @@ static int myfs_write(const char *path, const char *buf, size_t size, off_t offs
     if (size > 0) {
       if (buf[0] == '1') {
         g_snapshot_restore_enabled = 1;
-        log_line("CONTROL", path, "SNAPSHOT_RESTORE=ON", NULL);
+        log_line("CONTROL", path, "ALLOW", "SNAPSHOT_RESTORE=ON", NULL);
       } else if (buf[0] == '0') {
         g_snapshot_restore_enabled = 0;
-        log_line("CONTROL", path, "SNAPSHOT_RESTORE=OFF", NULL);
+        log_line("CONTROL", path, "ALLOW", "SNAPSHOT_RESTORE=OFF", NULL);
       }
     }
     return (int)size;
