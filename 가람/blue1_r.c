@@ -1256,19 +1256,23 @@ static int myfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 static int myfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     (void)path;
 
+	// 편집기 임시/백업 파일 여부
+	int is_temp = is_editor_temp_name(path);
+
     // 현재 PID에 대한 ReadStats 가져옴
-    ReadStats *rs = get_read_stats_for_current_pid();
+    ReadStats *rs = NULL;
     pid_t cur_pid = -1;
 
-    if (rs) {
-        cur_pid = rs->pid;
-    }
+	if (!is_temp) {
+			rs = get_read_stats_for_current_pid();
+        	if (rs) cur_pid = rs->pid;
 
-	// 이미 차단 상태인 PID면 바로 거부
-    if(rs && rs->blocked){
-        log_line("READ", path, "BLOCKED", "rate-limit-read", "pid=%d", (int)rs->pid);
-        return -EPERM;
-    }
+		// 이미 차단 상태인 PID면 바로 거부
+    	if(rs && rs->blocked){
+        	log_line("READ", path, "BLOCKED", "rate-limit-read", "pid=%d", (int)rs->pid);
+        	return -EPERM;
+    	}
+	}
 
     int fd = (int)fi->fh;
     // 실제 read
@@ -1279,7 +1283,7 @@ static int myfs_read(const char *path, char *buf, size_t size, off_t offset, str
     }
 
 	// 읽기량 누적 / 임계 초과 검사
-    if (rs && res > 0) {
+    if (!is_temp && rs && res > 0) {
         int just_blocked = 0;
         pthread_mutex_lock(&g_read_lock);
         time_t now = time(NULL);
@@ -1546,11 +1550,22 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
 
 // unlink : 삭제 레이트 리밋
 static int myfs_unlink(const char *path) {
+
+	// 편집기 임시/백업 파일이면 unlink rate limit에서 제외
+	if (is_editor_temp_name(path)) {
+		char rel[PATH_MAX];
+		get_relative_path(path, rel);
+
+		if (unlinkat(base_fd, rel, 0) == -1) {
+			log_line("UNLINK", path, "DENY", "os-error-editor-temp", "errno=%d", errno);
+			return -errno;
+		}
+		log_line("UNLINK", path, "ALLOW", "editor-temp-unlink", NULL);
+		return 0;
+	}
+	
     int count_in_window = 0;
     int exceeded = unlink_rate_limit_exceeded(&count_in_window); // 대량 삭제 탐지
-
-    char rel[PATH_MAX];
-    get_relative_path(path, rel);
 
     if (exceeded) {
 		// 윈도우 내 삭제 횟수 초과 -> 차단
