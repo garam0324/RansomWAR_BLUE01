@@ -1551,10 +1551,11 @@ static int myfs_release(const char *path, struct fuse_file_info *fi) {
 // unlink : 삭제 레이트 리밋
 static int myfs_unlink(const char *path) {
 
-	// 편집기 임시/백업 파일이면 unlink rate limit에서 제외
-	if (is_editor_temp_name(path)) {
 		char rel[PATH_MAX];
 		get_relative_path(path, rel);
+
+	// 편집기 임시/백업 파일이면 unlink rate limit에서 제외
+	if (is_editor_temp_name(path)) {
 
 		if (unlinkat(base_fd, rel, 0) == -1) {
 			log_line("UNLINK", path, "DENY", "os-error-editor-temp", "errno=%d", errno);
