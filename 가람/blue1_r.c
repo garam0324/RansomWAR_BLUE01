@@ -1178,6 +1178,16 @@ static int myfs_open(const char *path, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
 
+	// Snapshot control file bypass
+		if (strcmp(rel, SNAPSHOT_CTRL_FILE) == 0) {
+    	int fd = openat(base_fd, rel, fi->flags | O_CREAT, 0600);
+    	if (fd == -1) return -errno;
+    	fi->fh = fd;
+    	log_line("CONTROL", path, "ALLOW", "open-snapshot-control-file", NULL);
+    	return 0;
+	}
+
+
     struct stat st;
     int exists = (fstatat(base_fd, rel, &st, AT_SYMLINK_NOFOLLOW) == 0); // 해당 경로가 실제 존재하는지 확인
 
@@ -1592,6 +1602,13 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
     char relfrom[PATH_MAX];
     char relto[PATH_MAX];
 
+	if (strcmp(relfrom, SNAPSHOT_CTRL_FILE) == 0 ||
+    	strcmp(relto, SNAPSHOT_CTRL_FILE) == 0) {
+    	log_line("CONTROL", to, "BLOCK", "snapshot-control-file-no-rename", NULL);
+    	return -EPERM;
+	}
+
+
 	int is_temp_to = is_editor_temp_name(relto);
 
 	// 절대경로를 상대경로로 변환
@@ -1695,6 +1712,12 @@ static int myfs_rename(const char *from, const char *to, unsigned int flags) {
 static int myfs_truncate(const char *path, off_t size, struct fuse_file_info *fi) {
     char rel[PATH_MAX];
     get_relative_path(path, rel);
+
+	if (strcmp(rel, SNAPSHOT_CTRL_FILE) == 0) {
+    	log_line("CONTROL", path, "BLOCK", "snapshot-control-file-no-delete", NULL);
+    	return -EPERM;
+	}
+
 
     int res;
     if (fi && fi->fh) {
