@@ -31,7 +31,7 @@ RansomWAR_BLUE01 (RansomShield)
 
 - write 쿨다운 기능 추가, 스냅샷 복구 기능 추가, I/O 리듬 분석 기능 추가
 
-- 코드 보완 : 엔트로피 로직 보완, write rate limit 기능 보완(파일별 -> 전체) 등
+- 코드 보완 : 엔트로피 로직 보완, write rate limit 기능 보완(파일별 -> 전체), 편집기 호환성, 스냅샷 복구 on/off 등
 
 - 일정, 회의록, Github 관리
 
@@ -124,6 +124,7 @@ RansomWAR_BLUE01 (RansomShield)
 6. 정리 (Clean)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
+
 
 
 
