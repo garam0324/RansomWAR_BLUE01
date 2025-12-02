@@ -125,6 +125,11 @@ RansomWAR_BLUE01 (RansomShield)
 - 실행 파일 및 임시 파일을 삭제합니다.
 - $ make clean
 
+* 스냅샷 on/off 변경 방법
+- echo 0 > ~/workspace/.snapshots     (ON)
+- echo 1 > ~/workspace/.snapshots     (OFF)
+
+
 
 
 
