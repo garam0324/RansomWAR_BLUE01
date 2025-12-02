@@ -60,7 +60,7 @@ static int rl_unlink_count = 0;     // 현재 윈도우 내에서 몇 번 삭제
 #define FILE_SIZE_CHANGE_THRESHOLD 0.6    // 초기 크기의 60% 미만으로 줄어들면 차단
 #define MIN_SIZE_FOR_SNAPSHOT      1024   // 스냅샷 찍을 최소 파일 크기
 #define MAX_TRACKED_FILES          1024   // 추적할 파일수
-#define RESTORE_LOCK_SEC           (60*60) // 스냅샷 복구 후 이 시간 동안 쓰기 차단 (1시간)
+#define RESTORE_LOCK_SEC           30 // 스냅샷 복구 후 이 시간 동안 쓰기 차단 (30초)
 
 // 스냅샷 복구 on/off
 static int g_snapshot_restore_enabled = 1; // default 값은 1
